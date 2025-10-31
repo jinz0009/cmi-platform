@@ -156,7 +156,7 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
-# ============ 显示安全性：规整为可序列化类型以避免 pyarrow/Streamlit 错误 ============
+# ============ 显示安全：规整为可序列化类型以避免 pyarrow/Streamlit 错误 ============
 def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
     df_disp = df.copy()
     for col in df_disp.columns:
@@ -236,7 +236,7 @@ def logout():
     st.session_state.clear()
     st.rerun()
 
-# ============ 页面选择 ============
+# ============ 页面切换 ============
 if "user" not in st.session_state:
     tab = st.tabs(["🔑 登录", "🧾 注册"])
     with tab[0]:
@@ -252,7 +252,7 @@ if st.sidebar.button("🚪 退出登录"):
 
 page = st.sidebar.radio("导航", ["🏠 主页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 主页面", "📋 设备查询", "💰 杂费查询"])
 
-# ============ 主页面：录入（包含映射、会话持久化、全局填写与导入分流） ============
+# ============ 主页面：录入（映射、会话持久化、全局填写与导入分流） ============
 if page == "🏠 主页面":
     st.title("📊 询价录入与查询平台")
     st.header("📂 Excel 批量录入（智能表头映射）")
@@ -406,11 +406,7 @@ if page == "🏠 主页面":
                 st.markdown("**映射后预览（前 10 行）：**")
                 safe_st_dataframe(df_for_db.head(10))
 
-                # 默认保存全局值结构
-                if "bulk_values" not in st.session_state:
-                    st.session_state["bulk_values"] = {"project": "", "supplier": "", "enquirer": "", "date": "", "currency": ""}
-
-                # 检测是否需要将币种设为全局必填（若源数据中存在空币种）
+                # ========== 动态决定是否把 币种 设为全局必填 ==========
                 def column_has_empty_currency(df: pd.DataFrame) -> bool:
                     if "币种" not in df.columns:
                         return True
@@ -423,6 +419,10 @@ if page == "🏠 主页面":
                     return any(is_empty_val(x) for x in ser)
 
                 need_global_currency = column_has_empty_currency(df_for_db)
+
+                # global_form: 通过 session_state 控制已提交状态（避免局部变量在 rerun 中丢失）
+                if "bulk_values" not in st.session_state:
+                    st.session_state["bulk_values"] = {"project": "", "supplier": "", "enquirer": "", "date": "", "currency": ""}
 
                 st.markdown("请填写全局必填信息（会应用到所有导入记录）：")
                 with st.form("global_form"):
@@ -547,55 +547,7 @@ if page == "🏠 主页面":
                         st.session_state["bulk_applied"] = False
                         st.info("导入完成，已清除“已应用全局”标志。")
 
-    # ========== 手工录入 ==========
-    st.header("✏️ 设备手工录入")
-    with st.form("device_form"):
-        col1, col2, col3 = st.columns(3)
-        pj = col1.text_input("项目名称")
-        sup = col2.text_input("供应商名称")
-        inq = col3.text_input("询价人")
-        name = st.text_input("设备材料名称")
-        brand = st.text_input("品牌")
-        qty = st.number_input("数量确认", min_value=0.0)
-        price = st.number_input("设备单价", min_value=0.0)
-        cur = st.selectbox("币种", ["IDR","USD","RMB","SGD","MYR","THB"])
-        desc = st.text_area("描述（可选）")
-        remark = st.text_area("备注（可选）")
-        date = st.date_input("询价日期")
-        ok = st.form_submit_button("➕ 添加记录")
-    if ok:
-        if not (pj and sup and inq and name and brand):
-            st.error("❌ 必填项不能为空")
-        else:
-            with engine.begin() as conn:
-                conn.execute(text("""
-                INSERT INTO quotations (项目名称,供应商名称,询价人,设备材料名称,品牌,数量确认,
-                设备单价,币种,描述,备注,询价日期,录入人,地区)
-                VALUES (:p,:s,:i,:n,:b,:q,:pr,:c,:d,:r,:dt,:u,:reg)
-                """), {"p": pj,"s": sup,"i": inq,"n": name,"b": brand,"q": qty,"pr": price,"c": cur,
-                        "d": desc,"r": remark,"dt": str(date),"u": user["username"],"reg": user["region"]})
-            st.success("✅ 已添加记录。")
-
-    # ========== 杂费录入 ==========
-    st.header("💰 杂费录入")
-    with st.form("misc_form"):
-        pj = st.text_input("项目名称")
-        cat = st.text_input("杂费类目")
-        amt = st.number_input("金额", min_value=0.0)
-        cur = st.selectbox("币种", ["IDR","USD","RMB","SGD","MYR","THB"])
-        ok = st.form_submit_button("➕ 添加杂费")
-    if ok:
-        if not pj or not cat:
-            st.error("❌ 必填项不能为空")
-        else:
-            with engine.begin() as conn:
-                conn.execute(text("""
-                INSERT INTO misc_costs (项目名称,杂费类目,金额,币种,录入人,地区)
-                VALUES (:p,:c,:a,:cur,:u,:r)
-                """), {"p": pj,"c": cat,"a": amt,"cur": cur,"u": user["username"],"r": user["region"]})
-            st.success("✅ 杂费已添加。")
-
-# ============ 设备查询（含管理员删除） ============
+# ============ 设备查询（含管理员删除功能，已确保不会在选择时立即刷新） ============
 elif page == "📋 设备查询":
     st.header("📋 设备查询")
     kw = st.text_input("关键词（按选定字段搜索）")
@@ -668,84 +620,11 @@ elif page == "📋 设备查询":
                 buf.seek(0)
                 st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
 
-                # === 替换：设备查询分支（改进删除行为 — 先选择/勾选确认再删除；新增“删除所有搜索结果”） ===
-elif page == "📋 设备查询":
-    st.header("📋 设备查询")
-    kw = st.text_input("关键词（按选定字段搜索）")
-    search_fields = st.multiselect("选择要在其内搜索关键词（不选则在默认字段搜索）",
-                                   ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称", "地区"])
-    pj = st.text_input("按项目名称过滤（可选）")
-    sup = st.text_input("按供应商名称过滤（可选）")
-    brand_f = st.text_input("按品牌过滤（可选）")
-    cur = st.selectbox("币种", ["全部","IDR","USD","RMB","SGD","MYR","THB"], index=0)
-
-    regions_options = ["全部","Singapore","Malaysia","Thailand","Indonesia","Vietnam","Philippines","Others","All"]
-    if user["role"] == "admin":
-        region_filter = st.selectbox("按地区过滤（管理员可选）", regions_options, index=0)
-    else:
-        st.info(f"仅显示您所在地区的数据：{user['region']}")
-        region_filter = user["region"]
-
-    if st.button("🔍 搜索设备"):
-        if not (kw or pj or sup or brand_f or (cur != "全部") or (user["role"]=="admin" and region_filter and region_filter!="全部")):
-            st.warning("请输入关键词或至少一个过滤条件。")
-        else:
-            cond, params = [], {}
-            if pj:
-                cond.append("LOWER(项目名称) LIKE :pj")
-                params["pj"] = f"%{pj.lower()}%"
-            if sup:
-                cond.append("LOWER(供应商名称) LIKE :sup")
-                params["sup"] = f"%{sup.lower()}%"
-            if brand_f:
-                cond.append("LOWER(品牌) LIKE :brand")
-                params["brand"] = f"%{brand_f.lower()}%"
-            if cur != "全部":
-                cond.append("币种=:c")
-                params["c"] = cur
-            if user["role"] != "admin":
-                cond.append("地区=:r")
-                params["r"] = user["region"]
-            else:
-                if region_filter and region_filter != "全部":
-                    cond.append("地区=:r")
-                    params["r"] = region_filter
-
-            if kw:
-                tokens = re.findall(r"\S+", kw)
-                if search_fields:
-                    fields_to_search = search_fields
-                else:
-                    fields_to_search = ["设备材料名称","描述","品牌","规格或型号","项目名称","供应商名称"]
-                for i, token in enumerate(tokens):
-                    ors = []
-                    for j, f in enumerate(fields_to_search):
-                        param_name = f"kw_{i}_{j}"
-                        ors.append(f"LOWER({f}) LIKE :{param_name}")
-                        params[param_name] = f"%{token.lower()}%"
-                    cond.append("(" + " OR ".join(ors) + ")")
-
-            # 读取 rowid 以便删除操作（SQLite）
-            sql = "SELECT rowid, * FROM quotations"
-            if cond:
-                sql += " WHERE " + " AND ".join(cond)
-            df = pd.read_sql(sql, engine, params=params)
-
-            if df.empty:
-                st.info("未找到符合条件的记录。")
-            else:
-                safe_st_dataframe(df)
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                    df.to_excel(w, index=False)
-                buf.seek(0)
-                st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
-
-                # 管理员删除区块：先选择要删除的记录（多选），然后勾选确认并点击删除按钮
+                # 仅管理员显示删除 UI
                 if user["role"] == "admin":
                     st.markdown("---")
-                    st.markdown("⚠️ 管理员删除：请选择要删除的记录（多选），勾选确认后执行删除。")
-                    # 构造选择项（不触发页面立即刷新）
+                    st.markdown("⚠️ 管理员删除：先选择要删除的记录（多选），勾选确认后点击删除。")
+                    # 构造选择项（不会立即触发删除/刷新）
                     choices = []
                     for _, row in df.iterrows():
                         rid = int(row["rowid"])
@@ -754,64 +633,56 @@ elif page == "📋 设备查询":
                         proj = str(row.get("项目名称", ""))[:40]
                         choices.append(f"{rid} | {proj} | {name} | {brand}")
 
-                    # multiselect 用于选择要删除的条目 —— 选择不会触发删除或刷新
-                    selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="delete_selected")
+                    # 使用一个明确 key 的 multiselect，选择不会触发删除/刷新
+                    selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="admin_delete_selected")
 
-                    # 二次确认复选框（必须勾选才允许删除）
-                    confirm_selected = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="confirm_delete_selected")
+                    confirm_selected = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="admin_confirm_selected")
 
-                    # 删除所选按钮（只有在 confirm_checked 且 有选中项时才生效）
-                    if selected and confirm_selected:
-                        if st.button("🗑️ 确认删除所选记录"):
+                    # 删除所选按钮（仅在有选中并已确认时点击才会执行）
+                    if st.button("🗑️ 删除所选记录 (管理员)", key="admin_delete_button"):
+                        if not selected:
+                            st.warning("请先选择要删除的记录。")
+                        elif not confirm_selected:
+                            st.warning("请勾选确认框以执行删除。")
+                        else:
                             try:
                                 selected_rowids = [int(s.split("|", 1)[0].strip()) for s in selected]
                                 placeholders = ",".join(str(int(r)) for r in selected_rowids)
-                                try:
-                                    with engine.begin() as conn:
-                                        # 尝试归档到 deleted_quotations（若存在），若失败则忽略归档
-                                        try:
-                                            conn.execute(text(f"""
-                                                INSERT INTO deleted_quotations
-                                                SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
-                                                       报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
-                                                       币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
-                                                       CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
-                                                FROM quotations WHERE rowid IN ({placeholders})
-                                            """), {"user": user["username"]})
-                                        except Exception:
-                                            # 忽略归档失败（表可能不存在）
-                                            pass
-                                        # 执行删除
-                                        conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
-                                    st.success(f"已删除 {len(selected_rowids)} 条记录。")
-                                    # 操作完成后清除选择与确认状态，手动刷新查询结果
-                                    st.session_state.pop("delete_selected", None)
-                                    st.session_state.pop("confirm_delete_selected", None)
-                                    st.experimental_rerun()
-                                except Exception as e:
-                                    st.error(f"删除失败：{e}")
+                                with engine.begin() as conn:
+                                    # 试归档到 deleted_quotations（若存在），失败则忽略
+                                    try:
+                                        conn.execute(text(f"""
+                                            INSERT INTO deleted_quotations
+                                            SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
+                                                   报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
+                                                   币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
+                                                   CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
+                                            FROM quotations WHERE rowid IN ({placeholders})
+                                        """), {"user": user["username"]})
+                                    except Exception:
+                                        pass
+                                    conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
+                                st.success(f"已删除 {len(selected_rowids)} 条记录。")
+                                # 清除选择并刷新查询结果
+                                if "admin_delete_selected" in st.session_state:
+                                    del st.session_state["admin_delete_selected"]
+                                if "admin_confirm_selected" in st.session_state:
+                                    del st.session_state["admin_confirm_selected"]
+                                st.experimental_rerun()
                             except Exception as e:
-                                st.error(f"解析或删除所选记录时出错：{e}")
-                    elif selected and not confirm_selected:
-                        st.info("勾选确认框以启用删除按钮。")
+                                st.error(f"删除失败：{e}")
 
-                    # ------- 新增：删除全部搜索结果（管理员专用） -------
+                    # 删除全部搜索结果（管理员专用）
                     st.markdown("### 删除全部搜索结果（管理员）")
-                    st.markdown("如果你希望一次删除当前搜索出的所有记录，而不是手动多选，请使用下面选项。此操作不可恢复。")
-                    confirm_delete_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="confirm_delete_all")
-                    if confirm_delete_all:
-                        # 仅当勾选确认框时显示删除全部按钮
-                        if st.button("🗑️ 删除所有搜索结果"):
+                    confirm_delete_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="admin_confirm_delete_all")
+                    if st.button("🗑️ 删除所有搜索结果 (管理员)", key="admin_delete_all_button"):
+                        if not confirm_delete_all:
+                            st.warning("请勾选确认框以执行删除所有搜索结果。")
+                        else:
                             try:
-                                # 构造 WHERE 子句与参数（与上面查询相同）
-                                if cond:
-                                    where_clause = " WHERE " + " AND ".join(cond)
-                                else:
-                                    where_clause = ""
-                                # 先尝试用归档（若存在）
-                                try:
-                                    with engine.begin() as conn:
-                                        # 尝试插入到 deleted_quotations（如果存在）
+                                where_clause = (" WHERE " + " AND ".join(cond)) if cond else ""
+                                with engine.begin() as conn:
+                                    try:
                                         conn.execute(text(f"""
                                             INSERT INTO deleted_quotations
                                             SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
@@ -820,17 +691,14 @@ elif page == "📋 设备查询":
                                                    CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
                                             FROM quotations {where_clause}
                                         """), {"user": user["username"]})
-                                except Exception:
-                                    # 归档若失败也继续删除
-                                    pass
-                                # 执行删除
-                                with engine.begin() as conn:
+                                    except Exception:
+                                        pass
                                     conn.execute(text(f"DELETE FROM quotations {where_clause}"))
                                 st.success("✅ 已删除当前搜索范围内的所有记录。")
-                                # 清除任何选择/确认并刷新页面
-                                st.session_state.pop("delete_selected", None)
-                                st.session_state.pop("confirm_delete_selected", None)
-                                st.session_state.pop("confirm_delete_all", None)
+                                # 清 confirmation keys then rerun
+                                for k in ["admin_confirm_delete_all", "admin_confirm_selected", "admin_delete_selected"]:
+                                    if k in st.session_state:
+                                        del st.session_state[k]
                                 st.experimental_rerun()
                             except Exception as e:
                                 st.error(f"删除所有搜索结果失败：{e}")
@@ -861,4 +729,3 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理员后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
-

@@ -668,10 +668,84 @@ elif page == "📋 设备查询":
                 buf.seek(0)
                 st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
 
-                # 仅管理员显示删除 UI
+                # === 替换：设备查询分支（改进删除行为 — 先选择/勾选确认再删除；新增“删除所有搜索结果”） ===
+elif page == "📋 设备查询":
+    st.header("📋 设备查询")
+    kw = st.text_input("关键词（按选定字段搜索）")
+    search_fields = st.multiselect("选择要在其内搜索关键词（不选则在默认字段搜索）",
+                                   ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称", "地区"])
+    pj = st.text_input("按项目名称过滤（可选）")
+    sup = st.text_input("按供应商名称过滤（可选）")
+    brand_f = st.text_input("按品牌过滤（可选）")
+    cur = st.selectbox("币种", ["全部","IDR","USD","RMB","SGD","MYR","THB"], index=0)
+
+    regions_options = ["全部","Singapore","Malaysia","Thailand","Indonesia","Vietnam","Philippines","Others","All"]
+    if user["role"] == "admin":
+        region_filter = st.selectbox("按地区过滤（管理员可选）", regions_options, index=0)
+    else:
+        st.info(f"仅显示您所在地区的数据：{user['region']}")
+        region_filter = user["region"]
+
+    if st.button("🔍 搜索设备"):
+        if not (kw or pj or sup or brand_f or (cur != "全部") or (user["role"]=="admin" and region_filter and region_filter!="全部")):
+            st.warning("请输入关键词或至少一个过滤条件。")
+        else:
+            cond, params = [], {}
+            if pj:
+                cond.append("LOWER(项目名称) LIKE :pj")
+                params["pj"] = f"%{pj.lower()}%"
+            if sup:
+                cond.append("LOWER(供应商名称) LIKE :sup")
+                params["sup"] = f"%{sup.lower()}%"
+            if brand_f:
+                cond.append("LOWER(品牌) LIKE :brand")
+                params["brand"] = f"%{brand_f.lower()}%"
+            if cur != "全部":
+                cond.append("币种=:c")
+                params["c"] = cur
+            if user["role"] != "admin":
+                cond.append("地区=:r")
+                params["r"] = user["region"]
+            else:
+                if region_filter and region_filter != "全部":
+                    cond.append("地区=:r")
+                    params["r"] = region_filter
+
+            if kw:
+                tokens = re.findall(r"\S+", kw)
+                if search_fields:
+                    fields_to_search = search_fields
+                else:
+                    fields_to_search = ["设备材料名称","描述","品牌","规格或型号","项目名称","供应商名称"]
+                for i, token in enumerate(tokens):
+                    ors = []
+                    for j, f in enumerate(fields_to_search):
+                        param_name = f"kw_{i}_{j}"
+                        ors.append(f"LOWER({f}) LIKE :{param_name}")
+                        params[param_name] = f"%{token.lower()}%"
+                    cond.append("(" + " OR ".join(ors) + ")")
+
+            # 读取 rowid 以便删除操作（SQLite）
+            sql = "SELECT rowid, * FROM quotations"
+            if cond:
+                sql += " WHERE " + " AND ".join(cond)
+            df = pd.read_sql(sql, engine, params=params)
+
+            if df.empty:
+                st.info("未找到符合条件的记录。")
+            else:
+                safe_st_dataframe(df)
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                    df.to_excel(w, index=False)
+                buf.seek(0)
+                st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
+
+                # 管理员删除区块：先选择要删除的记录（多选），然后勾选确认并点击删除按钮
                 if user["role"] == "admin":
                     st.markdown("---")
-                    st.markdown("⚠️ 管理员删除：请选择要删除的记录（多选），然后确认删除。")
+                    st.markdown("⚠️ 管理员删除：请选择要删除的记录（多选），勾选确认后执行删除。")
+                    # 构造选择项（不触发页面立即刷新）
                     choices = []
                     for _, row in df.iterrows():
                         rid = int(row["rowid"])
@@ -680,39 +754,86 @@ elif page == "📋 设备查询":
                         proj = str(row.get("项目名称", ""))[:40]
                         choices.append(f"{rid} | {proj} | {name} | {brand}")
 
-                    selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices)
+                    # multiselect 用于选择要删除的条目 —— 选择不会触发删除或刷新
+                    selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="delete_selected")
 
-                    if selected:
-                        if st.button("🗑️ 删除所选记录"):
+                    # 二次确认复选框（必须勾选才允许删除）
+                    confirm_selected = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="confirm_delete_selected")
+
+                    # 删除所选按钮（只有在 confirm_checked 且 有选中项时才生效）
+                    if selected and confirm_selected:
+                        if st.button("🗑️ 确认删除所选记录"):
                             try:
                                 selected_rowids = [int(s.split("|", 1)[0].strip()) for s in selected]
-                                if st.checkbox("我确认要删除所选记录（此操作不可恢复）"):
-                                    placeholders = ",".join(str(int(r)) for r in selected_rowids)
-                                    try:
-                                        with engine.begin() as conn:
-                                            # 尝试归档到 deleted_quotations（如存在），否则直接删除
-                                            try:
-                                                conn.execute(text(f"""
-                                                    INSERT INTO deleted_quotations
-                                                    SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
-                                                           报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
-                                                           币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
-                                                           CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
-                                                    FROM quotations WHERE rowid IN ({placeholders})
-                                                """), {"user": user["username"]})
-                                            except Exception:
-                                                # 忽略归档失败（归档表可能不存在），继续执行删除
-                                                pass
-
-                                            conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
-                                        st.success(f"已删除 {len(selected_rowids)} 条记录。")
-                                        st.experimental_rerun()
-                                    except Exception as e:
-                                        st.error(f"删除失败：{e}")
-                                else:
-                                    st.info("请勾选确认框以执行删除。")
+                                placeholders = ",".join(str(int(r)) for r in selected_rowids)
+                                try:
+                                    with engine.begin() as conn:
+                                        # 尝试归档到 deleted_quotations（若存在），若失败则忽略归档
+                                        try:
+                                            conn.execute(text(f"""
+                                                INSERT INTO deleted_quotations
+                                                SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
+                                                       报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
+                                                       币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
+                                                       CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
+                                                FROM quotations WHERE rowid IN ({placeholders})
+                                            """), {"user": user["username"]})
+                                        except Exception:
+                                            # 忽略归档失败（表可能不存在）
+                                            pass
+                                        # 执行删除
+                                        conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
+                                    st.success(f"已删除 {len(selected_rowids)} 条记录。")
+                                    # 操作完成后清除选择与确认状态，手动刷新查询结果
+                                    st.session_state.pop("delete_selected", None)
+                                    st.session_state.pop("confirm_delete_selected", None)
+                                    st.experimental_rerun()
+                                except Exception as e:
+                                    st.error(f"删除失败：{e}")
                             except Exception as e:
-                                st.error(f"解析所选记录时出错：{e}")
+                                st.error(f"解析或删除所选记录时出错：{e}")
+                    elif selected and not confirm_selected:
+                        st.info("勾选确认框以启用删除按钮。")
+
+                    # ------- 新增：删除全部搜索结果（管理员专用） -------
+                    st.markdown("### 删除全部搜索结果（管理员）")
+                    st.markdown("如果你希望一次删除当前搜索出的所有记录，而不是手动多选，请使用下面选项。此操作不可恢复。")
+                    confirm_delete_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="confirm_delete_all")
+                    if confirm_delete_all:
+                        # 仅当勾选确认框时显示删除全部按钮
+                        if st.button("🗑️ 删除所有搜索结果"):
+                            try:
+                                # 构造 WHERE 子句与参数（与上面查询相同）
+                                if cond:
+                                    where_clause = " WHERE " + " AND ".join(cond)
+                                else:
+                                    where_clause = ""
+                                # 先尝试用归档（若存在）
+                                try:
+                                    with engine.begin() as conn:
+                                        # 尝试插入到 deleted_quotations（如果存在）
+                                        conn.execute(text(f"""
+                                            INSERT INTO deleted_quotations
+                                            SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
+                                                   报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
+                                                   币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
+                                                   CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
+                                            FROM quotations {where_clause}
+                                        """), {"user": user["username"]})
+                                except Exception:
+                                    # 归档若失败也继续删除
+                                    pass
+                                # 执行删除
+                                with engine.begin() as conn:
+                                    conn.execute(text(f"DELETE FROM quotations {where_clause}"))
+                                st.success("✅ 已删除当前搜索范围内的所有记录。")
+                                # 清除任何选择/确认并刷新页面
+                                st.session_state.pop("delete_selected", None)
+                                st.session_state.pop("confirm_delete_selected", None)
+                                st.session_state.pop("confirm_delete_all", None)
+                                st.experimental_rerun()
+                            except Exception as e:
+                                st.error(f"删除所有搜索结果失败：{e}")
                 else:
                     st.info("仅管理员可删除记录。")
 
@@ -740,3 +861,4 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理员后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+

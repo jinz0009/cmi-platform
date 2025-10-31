@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -98,7 +99,6 @@ HEADER_SYNONYMS = {
     "price (idr)": "设备单价", "subtotal (idr)": "设备小计",
 }
 
-# 我们期望的数据库列顺序（保持不变）
 DB_COLUMNS = [
     "序号","设备材料名称","规格或型号","描述","品牌","单位","数量确认",
     "报价品牌","型号","设备单价","设备小计","人工包干单价","人工包干小计",
@@ -106,7 +106,6 @@ DB_COLUMNS = [
     "询价人","项目名称","供应商名称","询价日期","录入人","地区"
 ]
 
-# helper: 根据原表头尝试自动匹配到我们期望的列名（返回 None 表示无法自动匹配）
 def auto_map_header(orig_header: str):
     if orig_header is None:
         return None
@@ -129,7 +128,6 @@ def auto_map_header(orig_header: str):
                 return v
     return None
 
-# 尝试从前几行检测真正的表头（支持单行或两行合并表头）
 def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_search_rows=8):
     nrows = df_preview.shape[0]
     ncols = df_preview.shape[1]
@@ -164,19 +162,43 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
-# 安全显示 DataFrame（当 Arrow 序列化失败时降级为字符串）
+# 规范化用于显示的 DataFrame（避免 ArrowTypeError）
+def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    df_disp = df.copy()
+    for col in df_disp.columns:
+        try:
+            ser = df_disp[col]
+            if ser.dtype != "object":
+                # keep numeric/datetime as-is (usually safe)
+                continue
+            non_null = ser.dropna()
+            if non_null.empty:
+                df_disp[col] = ser.where(ser.notna(), "").astype(str)
+                continue
+            has_bytes = any(isinstance(x, (bytes, bytearray, memoryview)) for x in non_null)
+            types_seen = {type(x) for x in non_null}
+            multiple_types = len(types_seen) > 1
+            if has_bytes or multiple_types:
+                df_disp[col] = ser.where(ser.notna(), None).apply(lambda x: "" if x is None else str(x))
+            else:
+                df_disp[col] = ser.where(ser.notna(), None).apply(lambda x: "" if x is None else x)
+        except Exception:
+            df_disp[col] = df_disp[col].where(df_disp[col].notna(), None).apply(lambda x: "" if x is None else str(x))
+    return df_disp
+
+# 安全显示 DataFrame（修复 height=None 问题并做降级）
 def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
+    df_disp = normalize_for_display(df)
     try:
         if height is None:
-            st.dataframe(df)
+            st.dataframe(df_disp)
         else:
-            st.dataframe(df, height=height)
+            st.dataframe(df_disp, height=height)
     except Exception:
-        # 降级：把所有非空值转换为字符串，空值保持为空字符串
-        df2 = df.copy()
+        df2 = df_disp.copy()
         for col in df2.columns:
             try:
-                df2[col] = df2[col].where(df2[col].notna(), None).astype(object).apply(lambda x: "" if x is None else str(x))
+                df2[col] = df2[col].where(df2[col].notna(), None).apply(lambda x: "" if x is None else str(x))
             except Exception:
                 df2[col] = df2[col].astype(str).fillna("")
         if height is None:
@@ -247,7 +269,6 @@ page = st.sidebar.radio("导航", ["🏠 主页面", "📋 设备查询", "💰 
 if page == "🏠 主页面":
     st.title("📊 询价录入与查询平台")
 
-    # 1️⃣ Excel 批量导入（智能表头映射，支持表头不在第一行/合并单元格）
     st.header("📂 Excel 批量录入（智能表头映射）")
     st.caption("系统会尝试识别上传文件的表头（支持前几行为合并单元格或标题），并给出建议映射。系统会先自动对应一版建议，你可以按列修改并看到哪些目标列未被提供或无值。")
 
@@ -294,10 +315,8 @@ if page == "🏠 主页面":
             st.markdown("**检测到的原始表头（用于映射，系统已尝试自动对应一版建议）：**")
             st.write(list(data_df.columns))
 
-            # 构建可选映射列表（不要让用户直接映射 '录入人' 和 '地区'）
             mapping_targets = ["Ignore"] + [c for c in DB_COLUMNS if c not in ("录入人","地区")]
 
-            # 先计算系统的自动建议（减少用户工作量）
             auto_defaults = {}
             for col in data_df.columns:
                 auto_val = auto_map_header(col)
@@ -308,13 +327,11 @@ if page == "🏠 主页面":
 
             st.markdown("系统已为每一列生成建议映射（你可以直接点击“应用映射并预览” 或 修改任意下拉再提交）。")
 
-            # 映射表单：默认选项为 auto_defaults（用户可修改）
             mapped_choices = {}
             with st.form("mapping_form"):
                 cols_left, cols_right = st.columns(2)
                 for i, col in enumerate(data_df.columns):
                     default = auto_defaults.get(col, "Ignore")
-                    # 分两栏展示 selectbox
                     container = cols_left if i % 2 == 0 else cols_right
                     sel = container.selectbox(f"源列: {col}", mapping_targets,
                                               index = mapping_targets.index(default) if default in mapping_targets else 0,
@@ -323,16 +340,13 @@ if page == "🏠 主页面":
                 submitted = st.form_submit_button("应用映射并预览")
 
             if submitted:
-                # 构建 target -> list[source_columns] 映射
                 target_sources = {}
                 for src, tgt in mapped_choices.items():
                     if tgt != "Ignore":
                         target_sources.setdefault(tgt, []).append(src)
 
-                # 哪些目标列没有任何源列映射
                 unmapped_targets = [t for t in DB_COLUMNS if t not in ("录入人","地区") and t not in target_sources.keys()]
 
-                # 如果有重复映射（多个源列映射到同一个目标）也阻止继续
                 dup_targets = {t: s for t, s in target_sources.items() if len(s) > 1}
                 if dup_targets:
                     dup_messages = []
@@ -341,7 +355,6 @@ if page == "🏠 主页面":
                     st.error("检测到多个源列映射同一目标列（这是不允许的）。请在映射中只为每个目标选择一个源列。\n\n" + "\n".join(dup_messages))
                     st.stop()
 
-                # 哪些目标列被映射但对应源列在数据中全为空（稳健判空）
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
@@ -354,7 +367,6 @@ if page == "🏠 主页面":
                     if not has_value:
                         mapped_but_empty.append(tgt)
 
-                # 执行重命名并补齐缺失列以供预览
                 rename_dict = {orig: mapped for orig, mapped in mapped_choices.items() if mapped != "Ignore"}
                 df_mapped = data_df.rename(columns=rename_dict).copy()
                 for c in DB_COLUMNS:
@@ -367,7 +379,7 @@ if page == "🏠 主页面":
                 st.markdown("**映射后预览（前 10 行）：**")
                 safe_st_dataframe(df_for_db.head(10))
 
-                # 在预览后：要求用户先填写全局四个必填项，但使用表单提交按钮（避免填写任意一项就结束）
+                # 全局信息：在单独表单内提交，避免只输入一项就继续
                 st.markdown("请先填写以下全局必填信息（会应用到所有导入记录），填写完后点击“应用全局并继续校验”：")
                 with st.form("global_form"):
                     col_a, col_b, col_c, col_d = st.columns(4)
@@ -381,22 +393,19 @@ if page == "🏠 主页面":
                     st.info("请填写全局必填信息并点击“应用全局并继续校验”以继续。")
                     st.stop()
 
-                # apply_global 已被点击；验证四项均已填写
                 if not (global_project and global_supplier and global_enquirer and global_date):
                     st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
                     st.stop()
 
-                # 将这四个信息应用到所有行（覆盖所有行，确保每行都有这些元信息）
+                # 将四个全局字段写入所有行（覆盖或改为 fillna 行为可按需切换）
                 df_final = df_for_db.copy()
                 df_final["项目名称"] = str(global_project)
                 df_final["供应商名称"] = str(global_supplier)
                 df_final["询价人"] = str(global_enquirer)
                 df_final["询价日期"] = str(global_date)
 
-                # 现在进行总体必填项检测（按你的要求）
                 overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
 
-                # 检查每行是否在 overall_required 中有缺失或空字符串（设备单价 / 币种 也必须存在）
                 def normalize_cell(x):
                     if pd.isna(x):
                         return None
@@ -405,25 +414,26 @@ if page == "🏠 主页面":
                         return None
                     return s
 
-                check_df = df_final[overall_required].applymap(normalize_cell)
+                # 使用规范化显示副本进行展示和问题行高亮，但业务校验基于 normalize_cell 判空
+                df_final_disp = normalize_for_display(df_final)
+                check_df = df_final.applymap(normalize_cell)[overall_required]
                 rows_missing_mask = check_df.isna().any(axis=1)
                 if rows_missing_mask.any():
-                    bad = df_final[rows_missing_mask]
+                    bad = df_final_disp[rows_missing_mask]
                     st.error(f"检测到部分记录缺少总体必填字段（{', '.join(overall_required)} 中至少一项）：共 {len(bad)} 条记录有缺项，已中止导入。请检查源数据或补全后再导入。")
                     safe_st_dataframe(bad.head(20))
                     st.stop()
 
                 st.markdown("**预备导入的最终预览（前 10 行）：**")
-                safe_st_dataframe(df_final.head(10))
+                safe_st_dataframe(df_final_disp.head(10))
 
                 if st.button("✅ 确认并导入这些记录"):
                     try:
                         df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                        # 额外检查：若仍有任何行在业务必填列为空，阻止导入
                         final_check = df_to_store[["设备材料名称","品牌","设备单价","币种"]].applymap(normalize_cell)
                         empty_rows_mask = final_check.isna().any(axis=1)
                         if empty_rows_mask.any():
-                            bad2 = df_to_store[empty_rows_mask]
+                            bad2 = normalize_for_display(df_to_store[empty_rows_mask])
                             st.error("检测到部分记录在业务必填字段（设备材料名称、品牌、设备单价、币种）仍为空，已中止导入。请检查源文件或手工补全后再导入。")
                             safe_st_dataframe(bad2.head(20))
                         else:
@@ -433,7 +443,7 @@ if page == "🏠 主页面":
                     except Exception as e:
                         st.error(f"导入失败：{e}")
 
-    # 2️⃣ 手工录入（保持不变）
+    # 2️⃣ 手工录入
     st.header("✏️ 设备手工录入")
     with st.form("device_form"):
         col1, col2, col3 = st.columns(3)
@@ -462,7 +472,7 @@ if page == "🏠 主页面":
                         "d": desc,"r": remark,"dt": str(date),"u": user["username"],"reg": user["region"]})
             st.success("✅ 已添加记录。")
 
-    # 3️⃣ 杂费录入（保持不变）
+    # 3️⃣ 杂费录入
     st.header("💰 杂费录入")
     with st.form("misc_form"):
         pj = st.text_input("项目名称")
@@ -572,5 +582,3 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理员后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
-
-

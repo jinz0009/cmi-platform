@@ -156,7 +156,7 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
-# ============ 安全显示（规整为可序列化类型以避免 pyarrow/Streamlit 错误） ============
+# ============ 显示安全（规整为可序列化类型以避免 Arrow 错误） ============
 def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
     df_disp = df.copy()
     for col in df_disp.columns:
@@ -558,7 +558,7 @@ if page == "🏠 主页面":
                         st.session_state["bulk_applied"] = False
                         st.info("导入完成，已清除“已应用全局”标志。")
 
-# ============ 设备查询（含管理员删除：管理员表单内一次性提交，避免勾选触发提前 rerun） ============
+# ============ 设备查询（含管理员删除：调试版） ============
 elif page == "📋 设备查询":
     st.header("📋 设备查询")
     kw = st.text_input("关键词（按选定字段搜索）")
@@ -625,9 +625,10 @@ elif page == "📋 设备查询":
                 buf.seek(0)
                 st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
 
+                # admin-only: use forms, but run debug delete on submit to show SQL and counts
                 if user["role"] == "admin":
                     st.markdown("---")
-                    st.markdown("⚠️ 管理员删除：在下面的表单中选择要删除的记录并确认，表单一次性提交并执行删除。")
+                    st.markdown("⚠️ 管理员删除（调试模式）：在下面的表单中选择要删除的记录并确认，提交后会显示调试信息。")
 
                     choices = []
                     for _, row in df.iterrows():
@@ -637,23 +638,33 @@ elif page == "📋 设备查询":
                         brand = str(row.get("品牌",""))[:30]
                         choices.append(f"{rid} | {proj} | {name} | {brand}")
 
-                    # 删除所选记录表单（一次性提交）
-                    with st.form("admin_delete_form2", clear_on_submit=False):
-                        selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="admin_delete_selected2")
-                        confirm = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="admin_delete_confirm2")
-                        submit_del = st.form_submit_button("🗑️ 删除所选记录（管理员）")
+                    # 调试删除表单（一次性提交）
+                    with st.form("admin_debug_delete_form"):
+                        selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="admin_debug_selected")
+                        confirm = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="admin_debug_confirm")
+                        submit_debug_del = st.form_submit_button("🗑️ 调试并删除所选记录（管理员）")
 
-                    if submit_del:
+                    if submit_debug_del:
                         if not selected:
                             st.warning("请先选择要删除的记录。")
                         elif not confirm:
                             st.warning("请勾选确认框以执行删除。")
                         else:
                             try:
+                                # 解析 rowid 列表
                                 selected_rowids = [int(s.split("|",1)[0].strip()) for s in selected]
+                                st.write("调试：将删除的 rowid 列表：", selected_rowids)
                                 placeholders = ",".join(str(int(r)) for r in selected_rowids)
-                                with engine.begin() as conn:
-                                    try:
+                                delete_sql = f"DELETE FROM quotations WHERE rowid IN ({placeholders})"
+                                st.write("调试：将执行的 SQL：", delete_sql)
+
+                                # 显示删除前总数
+                                before = pd.read_sql("SELECT COUNT(*) AS cnt FROM quotations", engine).iloc[0]["cnt"]
+                                st.write("调试：删除前 quotations 行数：", int(before))
+
+                                # 归档尝试（若表存在），若失败仅显示警告并继续
+                                try:
+                                    with engine.begin() as conn:
                                         conn.execute(text(f"""
                                             INSERT INTO deleted_quotations
                                             SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
@@ -662,28 +673,38 @@ elif page == "📋 设备查询":
                                                    CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
                                             FROM quotations WHERE rowid IN ({placeholders})
                                         """), {"user": user["username"]})
-                                    except Exception:
-                                        pass
-                                    conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
-                                st.success(f"已删除 {len(selected_rowids)} 条记录。")
+                                    st.write("调试：归档尝试完成（若表不存在会抛异常，此处已捕获）。")
+                                except Exception as e_arch:
+                                    st.warning(f"调试：归档时发生异常（已忽略）：{e_arch}")
+
+                                # 执行删除
+                                with engine.begin() as conn:
+                                    conn.execute(text(delete_sql))
+
+                                after = pd.read_sql("SELECT COUNT(*) AS cnt FROM quotations", engine).iloc[0]["cnt"]
+                                st.write("调试：删除后 quotations 行数：", int(after))
+                                st.success(f"调试：删除完成（删除前 {int(before)} -> 删除后 {int(after)}）。差值应为删除数量。")
+                                # 刷新页面以显示最新查询结果
                                 st.experimental_rerun()
                             except Exception as e:
-                                st.error(f"删除失败：{e}")
+                                st.error(f"调试删除时发生异常：{e}")
 
-                    # 删除全部搜索结果表单
-                    st.markdown("### 删除全部搜索结果（管理员）")
-                    with st.form("admin_delete_all_form2", clear_on_submit=False):
-                        confirm_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="admin_delete_all_confirm2")
-                        submit_del_all = st.form_submit_button("🗑️ 删除所有搜索结果（管理员）")
+                    # 调试删除全部搜索结果表单
+                    st.markdown("### 调试：删除全部搜索结果（管理员）")
+                    with st.form("admin_debug_delete_all_form"):
+                        confirm_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="admin_debug_confirm_all")
+                        submit_debug_del_all = st.form_submit_button("🗑️ 调试并删除所有搜索结果（管理员）")
 
-                    if submit_del_all:
+                    if submit_debug_del_all:
                         if not confirm_all:
                             st.warning("请勾选确认框以执行删除所有搜索结果。")
                         else:
                             try:
                                 where_clause = (" WHERE " + " AND ".join(cond)) if cond else ""
-                                with engine.begin() as conn:
-                                    try:
+                                st.write("调试：将执行删除的 WHERE 子句：", where_clause)
+                                # 归档尝试
+                                try:
+                                    with engine.begin() as conn:
                                         conn.execute(text(f"""
                                             INSERT INTO deleted_quotations
                                             SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
@@ -692,13 +713,22 @@ elif page == "📋 设备查询":
                                                    CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
                                             FROM quotations {where_clause}
                                         """), {"user": user["username"]})
-                                    except Exception:
-                                        pass
+                                    st.write("调试：归档尝试完成（若表不存在会抛异常，此处已捕获）。")
+                                except Exception as e_arch:
+                                    st.warning(f"调试：归档时发生异常（已忽略）：{e_arch}")
+
+                                before_all = pd.read_sql("SELECT COUNT(*) AS cnt FROM quotations", engine).iloc[0]["cnt"]
+                                st.write("调试：删除前 quotations 总行数：", int(before_all))
+
+                                with engine.begin() as conn:
                                     conn.execute(text(f"DELETE FROM quotations {where_clause}"))
-                                st.success("✅ 已删除当前搜索范围内的所有记录。")
+
+                                after_all = pd.read_sql("SELECT COUNT(*) AS cnt FROM quotations", engine).iloc[0]["cnt"]
+                                st.write("调试：删除后 quotations 总行数：", int(after_all))
+                                st.success(f"调试：已删除当前搜索范围内的记录（删除前 {int(before_all)} -> 删除后 {int(after_all)}）。")
                                 st.experimental_rerun()
                             except Exception as e:
-                                st.error(f"删除所有搜索结果失败：{e}")
+                                st.error(f"调试：删除所有搜索结果失败：{e}")
                 else:
                     st.info("仅管理员可删除记录。")
 

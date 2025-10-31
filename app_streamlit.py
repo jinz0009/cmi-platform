@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Complete app_streamlit.py with compatibility-safe rerun and robustness fixes.
+Integrated, fixed app_streamlit.py
 
-- safe_rerun(): compatibility wrapper for streamlit rerun.
-- normalize_for_display / safe_st_dataframe: avoid pyarrow ArrowTypeError.
-- Robust header detection: detect_header_from_preview + auto_map_header.
-- Robust mapped_but_empty detection and fill-only-empty global apply.
-- Admin delete verifies matching rowids, archives (if table exists), deletes and checks rowcount.
-- Unique widget keys to avoid session_state collisions.
-
-Save to main/app_streamlit.py and run with:
-    streamlit run main/app_streamlit.py
+- safe_rerun() compatibility wrapper
+- detect_header_from_preview + auto_map_header
+- normalize_for_display / safe_st_dataframe to avoid pyarrow errors
+- Robust mapped_but_empty detection (handles Series/DataFrame/multi-source)
+- Fill-global-values only into empty cells
+- Admin delete verifies matching rowids, archives (if table exists), deletes and checks rowcount
+- Unique widget keys
 """
 import streamlit as st
 import pandas as pd
@@ -22,12 +20,6 @@ st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
 
 # --- Compatibility helper: safe_rerun ---
 def safe_rerun():
-    """
-    Attempt to perform a Streamlit rerun in a way that works across versions.
-    - Prefer st.experimental_rerun if available.
-    - Otherwise, try raising internal RerunException if available.
-    - As a last resort set a session flag and show a warning to the user.
-    """
     try:
         if hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
@@ -44,7 +36,7 @@ def safe_rerun():
         st.warning("无法自动重启，请手动刷新浏览器页面。")
         return
 
-# Database engine (change URI for production)
+# Database engine
 engine = create_engine("sqlite:///quotation.db", connect_args={"check_same_thread": False})
 
 # ============ Initialize DB ============
@@ -94,7 +86,6 @@ with engine.begin() as conn:
         录入人 TEXT,
         地区 TEXT
     )"""))
-    # default admin
     conn.execute(text("""
     INSERT OR IGNORE INTO users (username, password, role, region)
     VALUES ('admin', :pw, 'admin', 'All')"""), {"pw": hashlib.sha256("admin123".encode()).hexdigest()})
@@ -137,22 +128,18 @@ def auto_map_header(orig_header: str):
     return None
 
 def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_search_rows=8):
-    """
-    Detect header rows from a preview (no header) DataFrame.
-    Returns (header_list, header_row_index) or (None, None).
-    """
     if df_preview is None or df_preview.shape[0] == 0:
         return None, None
     nrows, ncols = df_preview.shape
     search_rows = min(max_search_rows, nrows)
-    best = {"score": -1, "header": None, "row": None, "rows_used": 1, "mapped": 0, "nonempty": 0}
+    best = {"score": -1}
     for start in range(search_rows):
         for rows_used in range(1, max_header_rows + 1):
             if start + rows_used > nrows:
                 continue
             cand = []
-            nonempty_count = 0
-            mapped_count = 0
+            nonempty = 0
+            mapped = 0
             for col in range(ncols):
                 parts = []
                 for r in range(start, start + rows_used):
@@ -164,20 +151,19 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
                         parts.append(s)
                 header_text = " ".join(parts).strip()
                 if header_text:
-                    nonempty_count += 1
+                    nonempty += 1
                 cand.append(header_text)
                 if header_text and auto_map_header(header_text):
-                    mapped_count += 1
-            score = mapped_count + 0.5 * nonempty_count
+                    mapped += 1
+            score = mapped + 0.5 * nonempty
             if score > best["score"]:
-                best = {"score": score, "header": cand, "row": start, "rows_used": rows_used, "mapped": mapped_count, "nonempty": nonempty_count}
-    if best["header"] is not None:
+                best = {"score": score, "header": cand, "row": start, "rows_used": rows_used, "mapped": mapped, "nonempty": nonempty}
+    if best.get("header") is not None:
         if best["mapped"] >= 2 or (best["nonempty"] > 0 and (best["mapped"] / best["nonempty"]) >= 0.3):
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
 def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize DataFrame so Streamlit/pyarrow can serialize it safely."""
     if df is None:
         return df
     df_disp = df.copy()
@@ -267,7 +253,6 @@ if "user" not in st.session_state:
         register_form()
     st.stop()
 
-# If earlier safe_rerun set a refresh flag, show a manual refresh button
 if st.session_state.get("_needs_refresh", False):
     if st.button("手动刷新页面", key="manual_refresh"):
         safe_rerun()
@@ -327,13 +312,12 @@ if page == "🏠 主页面":
                 submit_map = st.form_submit_button("应用映射并预览")
 
             if submit_map:
-                # Build target_sources: target -> [src1, src2,...]
                 target_sources = {}
                 for src_col, tgt in mapped.items():
                     if tgt != "Ignore":
                         target_sources.setdefault(tgt, []).append(src_col)
 
-                # Robust mapped_but_empty detection
+                # Robust mapped_but_empty detection (integrated fix)
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
@@ -344,15 +328,33 @@ if page == "🏠 主页面":
                         else:
                             src_list.append(item)
                     for src_col in src_list:
-                        if src_col in data_df.columns:
-                            ser = data_df[src_col].astype(object)
+                        if src_col not in data_df.columns:
+                            continue
+                        col_obj = data_df[src_col]
+                        if isinstance(col_obj, pd.DataFrame):
                             try:
-                                ser_norm = ser.where(~ser.astype(str).str.strip().isin(["", "nan", "none"]), pd.NA)
+                                ser = col_obj.fillna("").astype(str).agg(" ".join, axis=1)
                             except Exception:
-                                ser_norm = ser.apply(lambda x: None if pd.isna(x) else (str(x).strip() if str(x).strip().lower() not in ("", "nan", "none") else pd.NA))
-                            if ser_norm.dropna().shape[0] > 0:
-                                has_value = True
-                                break
+                                ser = col_obj.iloc[:, 0].astype(object)
+                        else:
+                            ser = col_obj.astype(object)
+
+                        def normalize_val(x):
+                            if pd.isna(x):
+                                return pd.NA
+                            sx = str(x).strip()
+                            if sx.lower() in ("", "nan", "none"):
+                                return pd.NA
+                            return sx
+
+                        try:
+                            ser_norm = ser.map(normalize_val)
+                        except Exception:
+                            ser_norm = ser.astype(str).map(lambda x: None if x is None else (str(x).strip() if str(x).strip().lower() not in ("", "nan", "none") else pd.NA))
+
+                        if ser_norm.notna().any():
+                            has_value = True
+                            break
                     if not has_value:
                         mapped_but_empty.append(tgt)
 
@@ -366,7 +368,6 @@ if page == "🏠 主页面":
                 df_mapped["地区"] = user["region"]
                 df_for_db = df_mapped[DB_COLUMNS]
 
-                # Save mapping CSV to session
                 csv_buf = io.StringIO()
                 df_for_db.to_csv(csv_buf, index=False)
                 st.session_state["mapping_csv"] = csv_buf.getvalue()
@@ -378,7 +379,7 @@ if page == "🏠 主页面":
                 if mapped_but_empty:
                     st.warning(f"注意：以下目标列从源数据未检测到有效值：{', '.join(mapped_but_empty)}")
 
-    # Manual entry form
+    # Manual entry
     st.header("✏️ 手工录入设备")
     with st.form("manual_add_form", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -408,8 +409,7 @@ if page == "🏠 主页面":
     # Apply global values and import if mapping exists in session
     if st.session_state.get("mapping_done", False) and st.session_state.get("mapping_csv", None):
         st.markdown("---")
-        st.markdown("请填写全局信息（会填充到映射表中的缺失项，仅填空处）：")
-        # load df_for_db
+        st.markdown("请填写全局信息（仅填充空值）：")
         csv_buf = io.StringIO(st.session_state["mapping_csv"])
         df_for_db = pd.read_csv(csv_buf, dtype=object)
         for c in DB_COLUMNS:
@@ -417,7 +417,6 @@ if page == "🏠 主页面":
                 df_for_db[c] = pd.NA
         df_for_db = df_for_db[DB_COLUMNS]
 
-        # show preview safely
         st.markdown("映射后预览（前10行）：")
         safe_st_dataframe(df_for_db.head(10))
 
@@ -437,11 +436,9 @@ if page == "🏠 主页面":
             global_currency = col_e.selectbox("币种（用于填充空值）", ["","IDR","USD","RMB","SGD","MYR","THB"], index=0, key="global_currency")
             apply_global = st.form_submit_button("应用全局并继续导入")
         if apply_global:
-            # basic required checks
             if not (global_project and global_supplier and global_enquirer and global_date):
                 st.error("必须填写：项目名称、供应商名称、询价人和询价日期")
             else:
-                # fill only empty values (do not overwrite existing)
                 df_final = df_for_db.copy()
                 df_final["项目名称"] = df_final["项目名称"].fillna("").astype(str)
                 mask_proj = df_final["项目名称"].astype(str).str.strip() == ""
@@ -464,7 +461,6 @@ if page == "🏠 主页面":
                     mask_cur = df_final["币种"].astype(str).str.strip() == ""
                     df_final.loc[mask_cur, "币种"] = str(global_currency)
 
-                # Normalize empties and check overall required
                 def normalize_cell(x):
                     if pd.isna(x):
                         return None
@@ -484,7 +480,6 @@ if page == "🏠 主页面":
                 if not df_valid.empty:
                     try:
                         df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                        # final insert
                         with engine.begin() as conn:
                             df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
                         imported_count = len(df_to_store)
@@ -502,7 +497,6 @@ if page == "🏠 主页面":
                         df_invalid.to_excel(w, index=False)
                     buf_bad.seek(0)
                     st.download_button("下载未通过记录", buf_bad, "invalid_rows.xlsx", key="download_invalid")
-                # clear mapping session to avoid reapply accidentally
                 if imported_count > 0:
                     st.session_state.pop("mapping_csv", None)
                     st.session_state.pop("mapping_done", None)
@@ -527,9 +521,6 @@ if page == "📋 设备查询":
     else:
         st.info(f"仅显示您所在地区的数据：{user['region']}")
         region_filter = user["region"]
-
-        if st.button("🔍 搜索设备", key="search_button"):
-            pass
 
     if st.button("🔍 搜索设备", key="search_button"):
         conds = []
@@ -579,14 +570,12 @@ if page == "📋 设备查询":
             st.info("未找到符合条件的记录。")
         else:
             safe_st_dataframe(df)
-            # download
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 df.to_excel(writer, index=False)
             buf.seek(0)
             st.download_button("下载结果", buf, "设备查询结果.xlsx", key="download_search")
 
-            # Admin delete form (single form)
             if user["role"] == "admin":
                 st.markdown("---")
                 st.markdown("⚠️ 管理员删除：选择记录并确认。")
@@ -633,7 +622,6 @@ if page == "📋 设备查询":
                                 st.markdown("以下为将被删除的匹配记录，请核对：")
                                 safe_st_dataframe(matched_df)
 
-                                # Try archive first (ignore archive errors)
                                 try:
                                     with engine.begin() as conn:
                                         conn.execute(text(f"""
@@ -648,7 +636,6 @@ if page == "📋 设备查询":
                                 except Exception as e_arch:
                                     st.warning(f"归档异常（已忽略）：{e_arch}")
 
-                                # Execute DELETE and check rowcount
                                 delete_sql = f"DELETE FROM quotations WHERE rowid IN ({placeholders})"
                                 try:
                                     with engine.begin() as conn:
@@ -663,7 +650,6 @@ if page == "📋 设备查询":
                                 except Exception as e_del:
                                     st.error(f"执行 DELETE 时异常：{e_del}")
 
-                                # Verify after deletion
                                 try:
                                     after_df = pd.read_sql(select_verify_sql, engine)
                                     if after_df.empty:

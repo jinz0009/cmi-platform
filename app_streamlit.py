@@ -156,7 +156,7 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
-# ============ 显示安全：规整为可序列化类型以避免 pyarrow/Streamlit 错误 ============
+# ============ 安全显示（规整为可序列化类型以避免 pyarrow/Streamlit 错误） ============
 def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
     df_disp = df.copy()
     for col in df_disp.columns:
@@ -267,6 +267,7 @@ if page == "🏠 主页面":
 
     uploaded = st.file_uploader("上传 Excel 文件（.xlsx）", type=["xlsx"])
     if uploaded:
+        # 初始化会话变量（避免 KeyError）
         if "mapping_done" not in st.session_state:
             st.session_state["mapping_done"] = False
         if "bulk_applied" not in st.session_state:
@@ -279,17 +280,18 @@ if page == "🏠 主页面":
             preview = None
 
         if preview is not None:
-            st.markdown("**前几行预览（用于表头识别）：**")
+            st.markdown("**用于识别表头的前几行预览（仅展示）：**")
             safe_st_dataframe(preview.head(10))
 
             header_names, header_row_index = detect_header_from_preview(preview, max_header_rows=2, max_search_rows=8)
             raw_df_full = pd.read_excel(uploaded, header=None, dtype=object)
 
             if header_names is None:
+                st.info("未能自动识别表头，请手动映射（系统已把第一行作为候选）。")
                 header_row_index = 0
                 header_names = [str(x) if not pd.isna(x) else "" for x in raw_df_full.iloc[0].tolist()]
             else:
-                st.success(f"已检测到表头（结束于第 {header_row_index+1} 行）")
+                st.success(f"已检测到表头（结束于第 {header_row_index+1} 行），系统已生成建议映射：")
                 st.write(header_names)
 
             header_names = [str(x).strip() if (x is not None and not pd.isna(x)) else "" for x in header_names]
@@ -302,31 +304,36 @@ if page == "🏠 主页面":
 
             data_df.columns = header_names
 
-            st.markdown("**检测到的原始表头：**")
+            st.markdown("**检测到的原始表头（用于映射，系统已尝试自动对应一版建议）：**")
             st.write(list(data_df.columns))
 
-            # 恢复上次映射（若存在）
+            # 如果会话中已有 mapping_done，则优先从会话恢复映射结果（避免循环）
             if st.session_state.get("mapping_done", False) and st.session_state.get("mapping_csv", None):
                 try:
                     csv_buf = io.StringIO(st.session_state["mapping_csv"])
                     df_for_db = pd.read_csv(csv_buf, dtype=object)
+                    # 确保列完整
                     for c in DB_COLUMNS:
                         if c not in df_for_db.columns:
                             df_for_db[c] = pd.NA
                     df_for_db = df_for_db[DB_COLUMNS]
-                    st.info("已从会话恢复上次映射结果。若要重新映射，点击“清除映射并重新映射”。")
+                    st.info("已从会话恢复上次映射结果。若要重新映射，请点击下方“清除映射并重新映射”。")
                     if st.button("清除映射并重新映射"):
                         for k in ["mapping_done","mapping_csv","mapping_rename_dict","mapping_target_sources","mapping_mapped_but_empty","bulk_applied","bulk_values"]:
                             if k in st.session_state:
                                 del st.session_state[k]
                         st.experimental_rerun()
                     safe_st_dataframe(df_for_db.head(10))
+                    st.write("若需要修改映射，请先点击清除映射并重新执行映射流程。")
                 except Exception:
+                    st.warning("会话恢复上次映射失败，请重新执行映射。")
                     for k in ["mapping_done","mapping_csv","mapping_rename_dict","mapping_target_sources","mapping_mapped_but_empty"]:
                         if k in st.session_state:
                             del st.session_state[k]
 
             mapping_targets = ["Ignore"] + [c for c in DB_COLUMNS if c not in ("录入人","地区")]
+
+            # 自动建议
             auto_defaults = {}
             for col in data_df.columns:
                 auto_val = auto_map_header(col)
@@ -335,7 +342,8 @@ if page == "🏠 主页面":
                 else:
                     auto_defaults[col] = "Ignore"
 
-            st.markdown("系统已生成建议映射，您可调整后提交。")
+            st.markdown("系统已为每一列生成建议映射（你可以直接点击“应用映射并预览” 或 修改任意下拉再提交）。")
+
             mapped_choices = {}
             with st.form("mapping_form"):
                 cols_left, cols_right = st.columns(2)
@@ -359,7 +367,7 @@ if page == "🏠 主页面":
                     dup_messages = []
                     for t, srcs in dup_targets.items():
                         dup_messages.append(f"目标列 '{t}' 被多个源列映射: {', '.join(srcs)}")
-                    st.error("检测到重复映射，请修正并重新提交。\n\n" + "\n".join(dup_messages))
+                    st.error("检测到多个源列映射同一目标列（这是不允许的）。请修正映射后再继续。\n\n" + "\n".join(dup_messages))
                 else:
                     mapped_but_empty = []
                     for tgt, srcs in target_sources.items():
@@ -382,7 +390,7 @@ if page == "🏠 主页面":
                     df_mapped["地区"] = user["region"]
                     df_for_db = df_mapped[DB_COLUMNS]
 
-                    # 保存映射结果到 session（CSV 文本），防止 rerun 丢失
+                    # 把 df_for_db 序列化为 CSV 存入 session_state 以便跨 rerun 恢复
                     csv_buf = io.StringIO()
                     df_for_db.to_csv(csv_buf, index=False)
                     st.session_state["mapping_csv"] = csv_buf.getvalue()
@@ -391,10 +399,12 @@ if page == "🏠 主页面":
                     st.session_state["mapping_target_sources"] = target_sources
                     st.session_state["mapping_mapped_but_empty"] = mapped_but_empty
 
-                    st.success("映射已保存，请填写下方全局信息并提交以继续校验与导入。")
+                    st.success("映射已保存。现在请填写全局必填信息并提交以继续校验与导入。")
 
             mapping_available = st.session_state.get("mapping_done", False) or ('df_for_db' in locals())
+
             if mapping_available:
+                # 恢复 df_for_db（优先）
                 if st.session_state.get("mapping_done", False) and st.session_state.get("mapping_csv", None):
                     csv_buf = io.StringIO(st.session_state["mapping_csv"])
                     df_for_db = pd.read_csv(csv_buf, dtype=object)
@@ -406,7 +416,11 @@ if page == "🏠 主页面":
                 st.markdown("**映射后预览（前 10 行）：**")
                 safe_st_dataframe(df_for_db.head(10))
 
-                # ========== 动态决定是否把 币种 设为全局必填 ==========
+                # global_form 准备
+                if "bulk_values" not in st.session_state:
+                    st.session_state["bulk_values"] = {"project": "", "supplier": "", "enquirer": "", "date": "", "currency": ""}
+
+                # 检测是否需要币种作为全局必填（若源数据中存在空币种）
                 def column_has_empty_currency(df: pd.DataFrame) -> bool:
                     if "币种" not in df.columns:
                         return True
@@ -420,11 +434,7 @@ if page == "🏠 主页面":
 
                 need_global_currency = column_has_empty_currency(df_for_db)
 
-                # global_form: 通过 session_state 控制已提交状态（避免局部变量在 rerun 中丢失）
-                if "bulk_values" not in st.session_state:
-                    st.session_state["bulk_values"] = {"project": "", "supplier": "", "enquirer": "", "date": "", "currency": ""}
-
-                st.markdown("请填写全局必填信息（会应用到所有导入记录）：")
+                st.markdown("请填写全局必填信息（会应用到所有导入记录），填写完后点击“应用全局并继续校验”：")
                 with st.form("global_form"):
                     col_a, col_b, col_c, col_d, col_e = st.columns(5)
                     g_project = col_a.text_input("项目名称", key="bulk_project_input", value=st.session_state["bulk_values"].get("project", ""))
@@ -480,6 +490,7 @@ if page == "🏠 主页面":
                                 df_for_db[c] = pd.NA
                         df_for_db = df_for_db[DB_COLUMNS]
 
+                    # 应用全局并分离可导入/不可导入的记录
                     df_final = df_for_db.copy()
                     g = st.session_state["bulk_values"]
                     df_final["项目名称"] = str(g["project"])
@@ -547,7 +558,7 @@ if page == "🏠 主页面":
                         st.session_state["bulk_applied"] = False
                         st.info("导入完成，已清除“已应用全局”标志。")
 
-# ============ 设备查询（含管理员删除功能，已确保不会在选择时立即刷新） ============
+# ============ 设备查询（含管理员删除：管理员表单内一次性提交，避免勾选触发提前 rerun） ============
 elif page == "📋 设备查询":
     st.header("📋 设备查询")
     kw = st.text_input("关键词（按选定字段搜索）")
@@ -571,24 +582,18 @@ elif page == "📋 设备查询":
         else:
             cond, params = [], {}
             if pj:
-                cond.append("LOWER(项目名称) LIKE :pj")
-                params["pj"] = f"%{pj.lower()}%"
+                cond.append("LOWER(项目名称) LIKE :pj"); params["pj"] = f"%{pj.lower()}%"
             if sup:
-                cond.append("LOWER(供应商名称) LIKE :sup")
-                params["sup"] = f"%{sup.lower()}%"
+                cond.append("LOWER(供应商名称) LIKE :sup"); params["sup"] = f"%{sup.lower()}%"
             if brand_f:
-                cond.append("LOWER(品牌) LIKE :brand")
-                params["brand"] = f"%{brand_f.lower()}%"
+                cond.append("LOWER(品牌) LIKE :brand"); params["brand"] = f"%{brand_f.lower()}%"
             if cur != "全部":
-                cond.append("币种=:c")
-                params["c"] = cur
+                cond.append("币种=:c"); params["c"] = cur
             if user["role"] != "admin":
-                cond.append("地区=:r")
-                params["r"] = user["region"]
+                cond.append("地区=:r"); params["r"] = user["region"]
             else:
                 if region_filter and region_filter != "全部":
-                    cond.append("地区=:r")
-                    params["r"] = region_filter
+                    cond.append("地区=:r"); params["r"] = region_filter
 
             if kw:
                 tokens = re.findall(r"\S+", kw)
@@ -620,36 +625,34 @@ elif page == "📋 设备查询":
                 buf.seek(0)
                 st.download_button("📥 下载结果", buf, "设备查询结果.xlsx")
 
-                # 仅管理员显示删除 UI
                 if user["role"] == "admin":
                     st.markdown("---")
-                    st.markdown("⚠️ 管理员删除：先选择要删除的记录（多选），勾选确认后点击删除。")
-                    # 构造选择项（不会立即触发删除/刷新）
+                    st.markdown("⚠️ 管理员删除：在下面的表单中选择要删除的记录并确认，表单一次性提交并执行删除。")
+
                     choices = []
                     for _, row in df.iterrows():
                         rid = int(row["rowid"])
-                        name = str(row.get("设备材料名称", ""))[:60]
-                        brand = str(row.get("品牌", ""))[:30]
-                        proj = str(row.get("项目名称", ""))[:40]
+                        proj = str(row.get("项目名称",""))[:40]
+                        name = str(row.get("设备材料名称",""))[:60]
+                        brand = str(row.get("品牌",""))[:30]
                         choices.append(f"{rid} | {proj} | {name} | {brand}")
 
-                    # 使用一个明确 key 的 multiselect，选择不会触发删除/刷新
-                    selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="admin_delete_selected")
+                    # 删除所选记录表单（一次性提交）
+                    with st.form("admin_delete_form2", clear_on_submit=False):
+                        selected = st.multiselect("选中要删除的记录（显示：rowid | 项目 | 设备名称 | 品牌）", choices, key="admin_delete_selected2")
+                        confirm = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="admin_delete_confirm2")
+                        submit_del = st.form_submit_button("🗑️ 删除所选记录（管理员）")
 
-                    confirm_selected = st.checkbox("我确认要删除所选记录（此操作不可恢复）", key="admin_confirm_selected")
-
-                    # 删除所选按钮（仅在有选中并已确认时点击才会执行）
-                    if st.button("🗑️ 删除所选记录 (管理员)", key="admin_delete_button"):
+                    if submit_del:
                         if not selected:
                             st.warning("请先选择要删除的记录。")
-                        elif not confirm_selected:
+                        elif not confirm:
                             st.warning("请勾选确认框以执行删除。")
                         else:
                             try:
-                                selected_rowids = [int(s.split("|", 1)[0].strip()) for s in selected]
+                                selected_rowids = [int(s.split("|",1)[0].strip()) for s in selected]
                                 placeholders = ",".join(str(int(r)) for r in selected_rowids)
                                 with engine.begin() as conn:
-                                    # 试归档到 deleted_quotations（若存在），失败则忽略
                                     try:
                                         conn.execute(text(f"""
                                             INSERT INTO deleted_quotations
@@ -663,20 +666,18 @@ elif page == "📋 设备查询":
                                         pass
                                     conn.execute(text(f"DELETE FROM quotations WHERE rowid IN ({placeholders})"))
                                 st.success(f"已删除 {len(selected_rowids)} 条记录。")
-                                # 清除选择并刷新查询结果
-                                if "admin_delete_selected" in st.session_state:
-                                    del st.session_state["admin_delete_selected"]
-                                if "admin_confirm_selected" in st.session_state:
-                                    del st.session_state["admin_confirm_selected"]
                                 st.experimental_rerun()
                             except Exception as e:
                                 st.error(f"删除失败：{e}")
 
-                    # 删除全部搜索结果（管理员专用）
+                    # 删除全部搜索结果表单
                     st.markdown("### 删除全部搜索结果（管理员）")
-                    confirm_delete_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="admin_confirm_delete_all")
-                    if st.button("🗑️ 删除所有搜索结果 (管理员)", key="admin_delete_all_button"):
-                        if not confirm_delete_all:
+                    with st.form("admin_delete_all_form2", clear_on_submit=False):
+                        confirm_all = st.checkbox("我确认要删除当前所有搜索结果（不可恢复）", key="admin_delete_all_confirm2")
+                        submit_del_all = st.form_submit_button("🗑️ 删除所有搜索结果（管理员）")
+
+                    if submit_del_all:
+                        if not confirm_all:
                             st.warning("请勾选确认框以执行删除所有搜索结果。")
                         else:
                             try:
@@ -695,10 +696,6 @@ elif page == "📋 设备查询":
                                         pass
                                     conn.execute(text(f"DELETE FROM quotations {where_clause}"))
                                 st.success("✅ 已删除当前搜索范围内的所有记录。")
-                                # 清 confirmation keys then rerun
-                                for k in ["admin_confirm_delete_all", "admin_confirm_selected", "admin_delete_selected"]:
-                                    if k in st.session_state:
-                                        del st.session_state[k]
                                 st.experimental_rerun()
                             except Exception as e:
                                 st.error(f"删除所有搜索结果失败：{e}")

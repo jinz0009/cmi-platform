@@ -309,58 +309,30 @@ if page == "🏠 主页面":
                     if tgt != "Ignore":
                         target_sources.setdefault(tgt, []).append(src)
 
-                # 1) 检测到多个源对应一个列名时 -> 报错并阻止下一步
+                # 哪些目标列没有任何源列映射
+                unmapped_targets = [t for t in DB_COLUMNS if t not in ("录入人","地区") and t not in target_sources.keys()]
+
+                # 如果有重复映射（多个源列映射到同一个目标）也阻止继续
                 dup_targets = {t: s for t, s in target_sources.items() if len(s) > 1}
                 if dup_targets:
-                    # 严格视为阻塞性错误：不允许继续预览或导入
                     dup_messages = []
                     for t, srcs in dup_targets.items():
                         dup_messages.append(f"目标列 '{t}' 被多个源列映射: {', '.join(srcs)}")
                     st.error("检测到多个源列映射同一目标列（这是不允许的）。请在映射中只为每个目标选择一个源列。\n\n" + "\n".join(dup_messages))
-                    # 不继续后续任何导入相关操作
                     st.stop()
 
-                # 哪些目标列没有任何源列映射
-                unmapped_targets = [t for t in DB_COLUMNS if t not in ("录入人","地区") and t not in target_sources.keys()]
-
-                # 哪些目标列被映射但对应源列在数据中全为空
+                # 哪些目标列被映射但对应源列在数据中全为空（稳健判空）
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
                     for s in srcs:
                         if s in data_df.columns:
-                            # 判断该源列是否有可用值（非空白/非NaN）
-                            # 更稳健地判断：移除 None/nan/空字符串后看是否有任何非空值
                             col_series = data_df[s].astype(object).where(~data_df[s].astype(str).str.strip().isin(["", "nan", "none"]), pd.NA)
                             if col_series.dropna().size > 0:
                                 has_value = True
                                 break
                     if not has_value:
                         mapped_but_empty.append(tgt)
-
-                # 必填字段验证（用于表格内容层面的必填）
-                required_fields = ["设备材料名称","品牌"]
-                missing_required = [f for f in required_fields if f not in target_sources.keys()]
-                missing_required_empty = [f for f in required_fields if f in mapped_but_empty]
-
-                # 显示高亮信息
-                if unmapped_targets:
-                    st.warning(f"未被任何源列提供值的目标列（可根据需要选择源列映射）：{', '.join(unmapped_targets)}")
-                else:
-                    st.success("所有目标列已被至少分配了源列（某些列可能为 Ignore 或源列为空）。")
-
-                if mapped_but_empty:
-                    st.info(f"以下目标列已映射到源列，但对应源列中似乎没有任何非空值：{', '.join(mapped_but_empty)}")
-
-                if missing_required:
-                    st.error(f"必填字段未映射：{', '.join(missing_required)} — 请为这些字段选择源列后才可导入。")
-                elif missing_required_empty:
-                    st.error(f"必填字段已映射但没有数据：{', '.join(missing_required_empty)} — 请检查源列或手工补齐数据后再导入。")
-                else:
-                    st.success("必填字段映射且包含数据（或将由用户在手工录入时提供）。")
-
-                # 如果没有阻塞性错误（缺少必填映射或必填无数据），允许用户预览和确认导入
-                can_import = (len(missing_required) == 0 and len(missing_required_empty) == 0)
 
                 # 执行重命名并补齐缺失列以供预览
                 rename_dict = {orig: mapped for orig, mapped in mapped_choices.items() if mapped != "Ignore"}
@@ -375,44 +347,55 @@ if page == "🏠 主页面":
                 st.markdown("**映射后预览（前 10 行）：**")
                 st.dataframe(df_for_db.head(10))
 
-                if not can_import:
-                    st.error("检测到阻塞性问题（必填字段未映射或无数据），请先解决这些问题再导入。")
-                else:
-                    # 3) 在应用映射并预览后加入：项目名称、供应商名称、询价人和询价日期这四个必填项的填写
-                    st.markdown("请在继续导入前填写以下全局必填信息（会应用到所有导入记录）：")
-                    col_a, col_b, col_c, col_d = st.columns(4)
-                    global_project = col_a.text_input("项目名称", key="bulk_project")
-                    global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
-                    global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
-                    global_date = col_d.date_input("询价日期", key="bulk_date")
+                # 在预览后，先要求用户填写全局四个必填项（且必须先填写）
+                st.markdown("请先填写以下全局必填信息（会应用到所有导入记录）：")
+                col_a, col_b, col_c, col_d = st.columns(4)
+                global_project = col_a.text_input("项目名称", key="bulk_project")
+                global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
+                global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
+                global_date = col_d.date_input("询价日期", key="bulk_date")
 
-                    # 验证四个全局必填项
-                    if not (global_project and global_supplier and global_enquirer and global_date):
-                        st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
-                    else:
-                        # 将这四个信息填充到数据（只填充空值位置）
-                        df_final = df_for_db.copy()
-                        df_final["项目名称"] = df_final["项目名称"].fillna(str(global_project))
-                        df_final["供应商名称"] = df_final["供应商名称"].fillna(str(global_supplier))
-                        df_final["询价人"] = df_final["询价人"].fillna(str(global_enquirer))
-                        df_final["询价日期"] = df_final["询价日期"].fillna(str(global_date))
+                if not (global_project and global_supplier and global_enquirer and global_date):
+                    st.error("必须先填写：项目名称、供应商名称、询价人和询价日期，才能进行总体必填项校验与导入。")
+                    st.stop()
 
-                        st.markdown("**预备导入的最终预览（前 10 行）：**")
-                        st.dataframe(df_final.head(10))
+                # 将这四个信息应用到所有行（按你的要求：对所有行做填充，覆盖或确保存在）
+                df_final = df_for_db.copy()
+                df_final["项目名称"] = str(global_project)
+                df_final["供应商名称"] = str(global_supplier)
+                df_final["询价人"] = str(global_enquirer)
+                df_final["询价日期"] = str(global_date)
 
-                        if st.button("✅ 确认并导入这些记录"):
-                            try:
-                                df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                                # 额外检查：若仍有任何行在业务必填列为空（设备材料名称或品牌），阻止导入并给出错误
-                                empty_rows = df_to_store[df_to_store[["设备材料名称","品牌"]].isna().any(axis=1)]
-                                if not empty_rows.empty:
-                                    st.error("检测到部分记录在必填字段（设备材料名称、品牌）仍为空，已中止导入。请检查源文件或先使用映射/手工补全后再导入。")
-                                else:
-                                    with engine.begin() as conn:
-                                        df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
-                                    st.success(f"✅ 导入成功，共 {len(df_to_store)} 条记录。")
-                            except Exception as e:
-                                st.error(f"导入失败：{e}")
+                # 现在进行总体必填项检测（按你的要求）
+                overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
+
+                # 检查每行是否在 overall_required 中有缺失或为空字符串（设备单价 / 币种 也必须存在）
+                # 先把可能的空字符串/nan/None 统一处理，再判断
+                check_df = df_final[overall_required].astype(object).where(~df_final[overall_required].astype(str).applymap(lambda x: str(x).strip().lower() in ["", "nan", "none"]), pd.NA)
+                rows_with_missing = check_df.isna().any(axis=1)
+                if rows_with_missing.any():
+                    bad = df_final[rows_with_missing]
+                    st.error(f"检测到部分记录缺少总体必填字段（{', '.join(overall_required)} 中至少一项）：共 {len(bad)} 条记录有缺项，已中止导入。请检查源数据或补全后再导入。")
+                    st.dataframe(bad.head(20))
+                    st.stop()
+
+                st.markdown("**预备导入的最终预览（前 10 行）：**")
+                st.dataframe(df_final.head(10))
+
+                if st.button("✅ 确认并导入这些记录"):
+                    try:
+                        df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
+                        # 额外检查：若仍有任何行在业务必填列为空，阻止导入
+                        empty_rows = df_to_store[df_to_store[["设备材料名称","品牌","设备单价","币种"]].astype(object).where(~df_to_store[["设备材料名称","品牌","设备单价","币种"]].astype(str).applymap(lambda x: str(x).strip().lower() in ["", "nan", "none"]), pd.NA).isna().any(axis=1)]
+                        if not empty_rows.empty:
+                            st.error("检测到部分记录在业务必填字段（设备材料名称、品牌、设备单价、币种）仍为空，已中止导入。请检查源文件或手工补全后再导入。")
+                            st.dataframe(empty_rows.head(20))
+                        else:
+                            with engine.begin() as conn:
+                                df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
+                            st.success(f"✅ 导入成功，共 {len(df_to_store)} 条记录。")
+                    except Exception as e:
+                        st.error(f"导入失败：{e}")
 
     # 2️⃣ 手工录入（保持不变）
     st.header("✏️ 设备手工录入")

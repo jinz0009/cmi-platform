@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Complete app_streamlit.py with compatibility-safe rerun and previous fixes integrated.
+Complete app_streamlit.py with compatibility-safe rerun and robustness fixes.
 
-Changes:
-- Added safe_rerun() to replace direct calls to st.experimental_rerun() for compatibility.
-- Replaced all st.experimental_rerun() calls with safe_rerun().
-- Retained previous robustness fixes:
-  - normalize_for_display + safe_st_dataframe to avoid pyarrow ArrowTypeError.
-  - Robust mapped_but_empty detection and fill-only-empty global apply.
-  - Admin delete verified with SELECT and using result.rowcount.
+- safe_rerun(): compatibility wrapper for streamlit rerun.
+- normalize_for_display / safe_st_dataframe: avoid pyarrow ArrowTypeError.
+- Robust header detection: detect_header_from_preview + auto_map_header.
+- Robust mapped_but_empty detection and fill-only-empty global apply.
+- Admin delete verifies matching rowids, archives (if table exists), deletes and checks rowcount.
 - Unique widget keys to avoid session_state collisions.
 
-Usage:
-- Save as main/app_streamlit.py and run: streamlit run main/app_streamlit.py
-- Default admin user: admin / admin123 (example only).
+Save to main/app_streamlit.py and run with:
+    streamlit run main/app_streamlit.py
 """
 import streamlit as st
 import pandas as pd
@@ -35,13 +32,10 @@ def safe_rerun():
         if hasattr(st, "experimental_rerun"):
             st.experimental_rerun()
             return
-        # Try internal exception (different streamlit versions hide this)
         try:
-            # This import may fail on some versions
             from streamlit.runtime.scriptrunner import RerunException
             raise RerunException()
         except Exception:
-            # Final fallback
             st.session_state["_needs_refresh"] = True
             st.warning("请手动刷新页面以查看最新状态（自动刷新在当前 Streamlit 版本不可用）。")
             return
@@ -50,7 +44,7 @@ def safe_rerun():
         st.warning("无法自动重启，请手动刷新浏览器页面。")
         return
 
-# Database engine (adjust URI in production)
+# Database engine (change URI for production)
 engine = create_engine("sqlite:///quotation.db", connect_args={"check_same_thread": False})
 
 # ============ Initialize DB ============
@@ -142,6 +136,46 @@ def auto_map_header(orig_header: str):
             return v
     return None
 
+def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_search_rows=8):
+    """
+    Detect header rows from a preview (no header) DataFrame.
+    Returns (header_list, header_row_index) or (None, None).
+    """
+    if df_preview is None or df_preview.shape[0] == 0:
+        return None, None
+    nrows, ncols = df_preview.shape
+    search_rows = min(max_search_rows, nrows)
+    best = {"score": -1, "header": None, "row": None, "rows_used": 1, "mapped": 0, "nonempty": 0}
+    for start in range(search_rows):
+        for rows_used in range(1, max_header_rows + 1):
+            if start + rows_used > nrows:
+                continue
+            cand = []
+            nonempty_count = 0
+            mapped_count = 0
+            for col in range(ncols):
+                parts = []
+                for r in range(start, start + rows_used):
+                    cell = df_preview.iat[r, col]
+                    if pd.isna(cell):
+                        continue
+                    s = str(cell).strip()
+                    if s:
+                        parts.append(s)
+                header_text = " ".join(parts).strip()
+                if header_text:
+                    nonempty_count += 1
+                cand.append(header_text)
+                if header_text and auto_map_header(header_text):
+                    mapped_count += 1
+            score = mapped_count + 0.5 * nonempty_count
+            if score > best["score"]:
+                best = {"score": score, "header": cand, "row": start, "rows_used": rows_used, "mapped": mapped_count, "nonempty": nonempty_count}
+    if best["header"] is not None:
+        if best["mapped"] >= 2 or (best["nonempty"] > 0 and (best["mapped"] / best["nonempty"]) >= 0.3):
+            return best["header"], best["row"] + best["rows_used"] - 1
+    return None, None
+
 def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize DataFrame so Streamlit/pyarrow can serialize it safely."""
     if df is None:
@@ -150,11 +184,9 @@ def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
     for col in df_disp.columns:
         try:
             ser = df_disp[col]
-            # If it's DataFrame-like accidentally, coerce to str
             if isinstance(ser, pd.DataFrame):
                 df_disp[col] = ser.astype(str).apply(lambda x: x.str.slice(0, 100)).astype(str)
                 continue
-            # For object dtypes, ensure consistent element types (stringify mixed)
             if ser.dtype == "object":
                 non_null = ser.dropna()
                 if non_null.empty:
@@ -179,7 +211,6 @@ def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
         else:
             st.dataframe(df_disp, height=height)
     except Exception:
-        # Last resort stringify everything
         df2 = df_disp.copy()
         for col in df2.columns:
             df2[col] = df2[col].astype(str).fillna("")
@@ -239,7 +270,6 @@ if "user" not in st.session_state:
 # If earlier safe_rerun set a refresh flag, show a manual refresh button
 if st.session_state.get("_needs_refresh", False):
     if st.button("手动刷新页面", key="manual_refresh"):
-        # try best-effort rerun
         safe_rerun()
 
 user = st.session_state["user"]
@@ -307,7 +337,6 @@ if page == "🏠 主页面":
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
-                    # flatten any nested lists defensively
                     src_list = []
                     for item in srcs:
                         if isinstance(item, (list, tuple, set)):
@@ -498,6 +527,9 @@ if page == "📋 设备查询":
     else:
         st.info(f"仅显示您所在地区的数据：{user['region']}")
         region_filter = user["region"]
+
+        if st.button("🔍 搜索设备", key="search_button"):
+            pass
 
     if st.button("🔍 搜索设备", key="search_button"):
         conds = []

@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Complete fixed app_streamlit.py
+Complete app_streamlit.py with compatibility-safe rerun and previous fixes integrated.
 
-Key fixes:
-- Robust detection for "mapped but empty" (flatten src lists, ensure Series before .str).
-- Fill global values only into empty cells (do not overwrite existing values).
-- Use safe_st_dataframe (normalize_for_display) on every DataFrame shown to avoid pyarrow ArrowTypeError.
-- Defensive checks and clear error messages for delete/import operations.
+Changes:
+- Added safe_rerun() to replace direct calls to st.experimental_rerun() for compatibility.
+- Replaced all st.experimental_rerun() calls with safe_rerun().
+- Retained previous robustness fixes:
+  - normalize_for_display + safe_st_dataframe to avoid pyarrow ArrowTypeError.
+  - Robust mapped_but_empty detection and fill-only-empty global apply.
+  - Admin delete verified with SELECT and using result.rowcount.
 - Unique widget keys to avoid session_state collisions.
+
+Usage:
+- Save as main/app_streamlit.py and run: streamlit run main/app_streamlit.py
+- Default admin user: admin / admin123 (example only).
 """
 import streamlit as st
 import pandas as pd
@@ -16,6 +22,33 @@ import hashlib, io, re
 from datetime import date
 
 st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
+
+# --- Compatibility helper: safe_rerun ---
+def safe_rerun():
+    """
+    Attempt to perform a Streamlit rerun in a way that works across versions.
+    - Prefer st.experimental_rerun if available.
+    - Otherwise, try raising internal RerunException if available.
+    - As a last resort set a session flag and show a warning to the user.
+    """
+    try:
+        if hasattr(st, "experimental_rerun"):
+            st.experimental_rerun()
+            return
+        # Try internal exception (different streamlit versions hide this)
+        try:
+            # This import may fail on some versions
+            from streamlit.runtime.scriptrunner import RerunException
+            raise RerunException()
+        except Exception:
+            # Final fallback
+            st.session_state["_needs_refresh"] = True
+            st.warning("请手动刷新页面以查看最新状态（自动刷新在当前 Streamlit 版本不可用）。")
+            return
+    except Exception:
+        st.session_state["_needs_refresh"] = True
+        st.warning("无法自动重启，请手动刷新浏览器页面。")
+        return
 
 # Database engine (adjust URI in production)
 engine = create_engine("sqlite:///quotation.db", connect_args={"check_same_thread": False})
@@ -158,23 +191,18 @@ def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
 # ============ Auth UI ============
 def login_form():
     st.subheader("🔐 用户登录")
-    u = st.text_input("用户名", key="login_user")
-    p = st.text_input("密码", type="password", key="login_pass")
+    username = st.text_input("用户名", key="login_user")
+    password = st.text_input("密码", type="password", key="login_pass")
     if st.button("登录", key="login_button"):
-        if not u or not p:
-            st.error("请输入用户名和密码")
-            return
-        pw_hash = hashlib.sha256(p.encode()).hexdigest()
+        pw_hash = hashlib.sha256(password.encode()).hexdigest()
         with engine.begin() as conn:
-            user = conn.execute(text("SELECT username, role, region FROM users WHERE username=:u AND password=:p"),
-                                {"u": u, "p": pw_hash}).fetchone()
+            user = conn.execute(text("SELECT * FROM users WHERE username=:u AND password=:p"), {"u": username, "p": pw_hash}).fetchone()
         if user:
-            st.session_state["user"] = {"username": user.username, "role": user.role, "region": user.region}
-            st.success(f"登录成功：{user.username}")
-            st.experimental_rerun()
+            st.session_state["user"] = {"username": username, "role": user.role, "region": user.region}
+            st.success(f"✅ 登录成功！欢迎 {username}（{user.region}）")
+            safe_rerun()
         else:
-            st.error("用户名或密码错误")
-    st.info("默认 admin / admin123（示例）")
+            st.error("❌ 用户名或密码错误")
 
 def register_form():
     st.subheader("🧾 注册")
@@ -197,7 +225,7 @@ def register_form():
 def logout():
     if "user" in st.session_state:
         del st.session_state["user"]
-    st.experimental_rerun()
+    safe_rerun()
 
 # ============ Page flow ============
 if "user" not in st.session_state:
@@ -207,6 +235,12 @@ if "user" not in st.session_state:
     with tabs[1]:
         register_form()
     st.stop()
+
+# If earlier safe_rerun set a refresh flag, show a manual refresh button
+if st.session_state.get("_needs_refresh", False):
+    if st.button("手动刷新页面", key="manual_refresh"):
+        # try best-effort rerun
+        safe_rerun()
 
 user = st.session_state["user"]
 st.sidebar.markdown(f"👤 **{user['username']}**  \n🏢 地区：{user['region']}  \n🔑 角色：{user['role']}")
@@ -269,9 +303,7 @@ if page == "🏠 主页面":
                     if tgt != "Ignore":
                         target_sources.setdefault(tgt, []).append(src_col)
 
-                # Detect duplicates mapping (multiple different source cols mapping to same target is allowed
-                # but in our earlier logic we rejected it; here we allow but detect empty)
-                # Robustly detect mapped_but_empty
+                # Robust mapped_but_empty detection
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
@@ -284,13 +316,10 @@ if page == "🏠 主页面":
                             src_list.append(item)
                     for src_col in src_list:
                         if src_col in data_df.columns:
-                            # Ensure Series
                             ser = data_df[src_col].astype(object)
-                            # Normalize empty-like strings to NA
                             try:
                                 ser_norm = ser.where(~ser.astype(str).str.strip().isin(["", "nan", "none"]), pd.NA)
                             except Exception:
-                                # In rare cases force string conversion safe
                                 ser_norm = ser.apply(lambda x: None if pd.isna(x) else (str(x).strip() if str(x).strip().lower() not in ("", "nan", "none") else pd.NA))
                             if ser_norm.dropna().shape[0] > 0:
                                 has_value = True
@@ -320,7 +349,7 @@ if page == "🏠 主页面":
                 if mapped_but_empty:
                     st.warning(f"注意：以下目标列从源数据未检测到有效值：{', '.join(mapped_but_empty)}")
 
-    # Manual entry form (kept minimal)
+    # Manual entry form
     st.header("✏️ 手工录入设备")
     with st.form("manual_add_form", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -613,7 +642,7 @@ if page == "📋 设备查询":
                                 except Exception as e_after:
                                     st.warning(f"删除后复核失败：{e_after}")
 
-                                st.experimental_rerun()
+                                safe_rerun()
             else:
                 st.info("仅管理员可删除记录。")
 

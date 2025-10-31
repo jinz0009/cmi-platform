@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 import hashlib, io, re, math
-from datetime import date
 
 # ============ 基础配置 ============
 st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
@@ -230,7 +229,7 @@ if page == "🏠 主页面":
 
     # 1️⃣ Excel 批量导入（智能表头映射，支持表头不在第一行/合并单元格）
     st.header("📂 Excel 批量录入（智能表头映射）")
-    st.caption("系统会尝试识别上传文件的表头（支持前几行为合并单元格或标题），并给出建议映射。系统会先自动对应一版建议，你可以按列修改并看到每列对应的错误提示（重复映射/映射为空/未映射的目标列等）。")
+    st.caption("系统会尝试识别上传文件的表头（支持前几行为合并单元格或标题），并给出建议映射。系统会先自动对应一版建议，你可以按列修改并看到哪些目标列未被提供或无值。")
 
     template = pd.DataFrame(columns=[c for c in DB_COLUMNS if c not in ("录入人","地区")])
     buf = io.BytesIO()
@@ -295,13 +294,11 @@ if page == "🏠 主页面":
                 cols_left, cols_right = st.columns(2)
                 for i, col in enumerate(data_df.columns):
                     default = auto_defaults.get(col, "Ignore")
+                    # 分两栏展示 selectbox
                     container = cols_left if i % 2 == 0 else cols_right
                     sel = container.selectbox(f"源列: {col}", mapping_targets,
                                               index = mapping_targets.index(default) if default in mapping_targets else 0,
                                               key=f"map_{i}")
-                    # 在表单内也显示系统建议以帮助用户决定（仅显示文字，不影响提交）
-                    if default != "Ignore" and default != sel:
-                        container.caption(f"系统建议: {default}")
                     mapped_choices[col] = sel
                 submitted = st.form_submit_button("应用映射并预览")
 
@@ -312,179 +309,110 @@ if page == "🏠 主页面":
                     if tgt != "Ignore":
                         target_sources.setdefault(tgt, []).append(src)
 
-                # 检测重复映射（多个源列映射到同一目标）
-                dup_targets = {t for t, srcs in target_sources.items() if len(srcs) > 1}
+                # 1) 检测到多个源对应一个列名时 -> 报错并阻止下一步
+                dup_targets = {t: s for t, s in target_sources.items() if len(s) > 1}
+                if dup_targets:
+                    # 严格视为阻塞性错误：不允许继续预览或导入
+                    dup_messages = []
+                    for t, srcs in dup_targets.items():
+                        dup_messages.append(f"目标列 '{t}' 被多个源列映射: {', '.join(srcs)}")
+                    st.error("检测到多个源列映射同一目标列（这是不允许的）。请在映射中只为每个目标选择一个源列。\n\n" + "\n".join(dup_messages))
+                    # 不继续后续任何导入相关操作
+                    st.stop()
 
-                # 生成每个源列的逐项状态（用于页面逐项高亮提示）
-                per_source_status = []  # list of dicts: {source, target, status}
-                for src in data_df.columns:
-                    tgt = mapped_choices.get(src, "Ignore")
-                    if tgt == "Ignore":
-                        status = ("ignored", "被忽略")
-                    else:
-                        messages = []
-                        if tgt in dup_targets:
-                            messages.append(("error", "目标被多个源列映射（重复映射）"))
-                        # 检查源列是否有非空数据
-                        col_vals = data_df[src].dropna().astype(str).str.strip()
-                        has_data = False
-                        if not col_vals.empty and (col_vals.str.len() > 0).any():
-                            has_data = True
-                        if not has_data:
-                            messages.append(("warn", "源列无可用数据"))
-                        if not messages:
-                            status = ("ok", "映射正常")
-                        else:
-                            # prioritize error > warn
-                            if any(m[0] == "error" for m in messages):
-                                status = ("error", "; ".join(m[1] for m in messages))
-                            else:
-                                status = ("warn", "; ".join(m[1] for m in messages))
-                    per_source_status.append({"source": src, "target": tgt, "status": status})
-
-                # 目标列层级状态（哪些未映射，哪些映射但空，哪些重复）
+                # 哪些目标列没有任何源列映射
                 unmapped_targets = [t for t in DB_COLUMNS if t not in ("录入人","地区") and t not in target_sources.keys()]
+
+                # 哪些目标列被映射但对应源列在数据中全为空
                 mapped_but_empty = []
                 for tgt, srcs in target_sources.items():
                     has_value = False
                     for s in srcs:
-                        col_vals = data_df[s].dropna().astype(str).str.strip()
-                        if not col_vals.empty and (col_vals.str.len() > 0).any():
-                            has_value = True
-                            break
+                        if s in data_df.columns:
+                            # 判断该源列是否有可用值（非空白/非NaN）
+                            # 更稳健地判断：移除 None/nan/空字符串后看是否有任何非空值
+                            col_series = data_df[s].astype(object).where(~data_df[s].astype(str).str.strip().isin(["", "nan", "none"]), pd.NA)
+                            if col_series.dropna().size > 0:
+                                has_value = True
+                                break
                     if not has_value:
                         mapped_but_empty.append(tgt)
 
-                # 必填字段：项目名称、供应商名称、询价人、询价日期
-                required_fields = ["项目名称","供应商名称","询价人","询价日期"]
+                # 必填字段验证（用于表格内容层面的必填）
+                required_fields = ["设备材料名称","品牌"]
+                missing_required = [f for f in required_fields if f not in target_sources.keys()]
+                missing_required_empty = [f for f in required_fields if f in mapped_but_empty]
 
-                # 显示逐项错误/状态：先显示 source-level 状态表，便于用户逐列修正
-                st.markdown("### 每个源列的映射状态（请按照下面提示逐项修正）")
-                status_rows = []
-                for row in per_source_status:
-                    src = row["source"]
-                    tgt = row["target"]
-                    code, text_msg = row["status"]
-                    if code == "ok":
-                        emoji = "✅"
-                        style = ""
-                    elif code == "warn":
-                        emoji = "⚠️"
-                        style = ""
-                    else:
-                        emoji = "❌"
-                        style = ""
-                    status_rows.append({"源列": src, "映射到目标": tgt, "状态": f"{emoji} {text_msg}"})
-                st.table(pd.DataFrame(status_rows))
+                # 显示高亮信息
+                if unmapped_targets:
+                    st.warning(f"未被任何源列提供值的目标列（可根据需要选择源列映射）：{', '.join(unmapped_targets)}")
+                else:
+                    st.success("所有目标列已被至少分配了源列（某些列可能为 Ignore 或源列为空）。")
 
-                # 显示目标列总体状态，便于一目了然知道哪些目标缺数据或未映射
-                st.markdown("### 目标列总体状态（目标列 -> 状态）")
-                tgt_status_rows = []
-                for t in DB_COLUMNS:
-                    if t in ("录入人","地区"):
-                        continue
-                    if t in dup_targets:
-                        tgt_status_rows.append({"目标列": t, "状态": "❌ 重复映射（多个源列）"})
-                    elif t in mapped_but_empty:
-                        tgt_status_rows.append({"目标列": t, "状态": "⚠️ 已映射但源列无数据"})
-                    elif t not in target_sources:
-                        tgt_status_rows.append({"目标列": t, "状态": "⚠️ 未映射"})
-                    else:
-                        tgt_status_rows.append({"目标列": t, "状态": "✅ 映射并存在数据（或待确认）"})
-                st.table(pd.DataFrame(tgt_status_rows))
+                if mapped_but_empty:
+                    st.info(f"以下目标列已映射到源列，但对应源列中似乎没有任何非空值：{', '.join(mapped_but_empty)}")
 
-                # 1) 若存在重复映射 -> 阻止继续
-                if dup_targets:
-                    st.error(f"检测到重复映射：{', '.join(dup_targets)}。请先调整映射（每个目标最多对应一个源列）。")
-                    st.stop()
+                if missing_required:
+                    st.error(f"必填字段未映射：{', '.join(missing_required)} — 请为这些字段选择源列后才可导入。")
+                elif missing_required_empty:
+                    st.error(f"必填字段已映射但没有数据：{', '.join(missing_required_empty)} — 请检查源列或手工补齐数据后再导入。")
+                else:
+                    st.success("必填字段映射且包含数据（或将由用户在手工录入时提供）。")
 
-                # 2) 对必填字段进行检查：若未映射或映射但无数据，则要求用户填写默认值；未填写默认值则阻止继续
-                st.markdown("### 必填字段校验与默认值填写")
-                st.markdown("必填：项目名称、供应商名称、询价人、询价日期。若映射不存在或源列为空，请在下面填写默认值（输入后会填充到所有空行）。")
-                defaults = {}
-                for rf in required_fields:
-                    needs_input = False
-                    if rf not in target_sources:
-                        needs_input = True
-                    elif rf in mapped_but_empty:
-                        needs_input = True
-                    if needs_input:
-                        if rf == "询价日期":
-                            defaults[rf] = st.date_input(f"为缺失的必填项填写默认值：{rf}", value=date.today(), key=f"default_{rf}")
-                        else:
-                            defaults[rf] = st.text_input(f"为缺失的必填项填写默认值：{rf}", value="", key=f"default_{rf}")
-                    else:
-                        defaults[rf] = None
-                        st.info(f"{rf} 已由源列映射且存在数据，无需默认填充。")
+                # 如果没有阻塞性错误（缺少必填映射或必填无数据），允许用户预览和确认导入
+                can_import = (len(missing_required) == 0 and len(missing_required_empty) == 0)
 
-                missing_required_no_default = []
-                for rf in required_fields:
-                    if rf not in target_sources:
-                        val = defaults.get(rf)
-                        if val is None or (isinstance(val, str) and val.strip() == ""):
-                            missing_required_no_default.append(rf)
-                    else:
-                        if rf in mapped_but_empty:
-                            val = defaults.get(rf)
-                            if val is None or (isinstance(val, str) and val.strip() == ""):
-                                missing_required_no_default.append(rf)
-
-                if missing_required_no_default:
-                    st.error(f"必填项未被提供数据且未填写默认值：{', '.join(missing_required_no_default)}。请为这些字段输入默认值或调整映射后再继续。")
-                    st.stop()
-
-                st.success("必填字段校验通过（映射或已填写默认值）。现在可预览并确认导入。")
-
-                # 执行重命名并补齐缺失列以供预览/导入
+                # 执行重命名并补齐缺失列以供预览
                 rename_dict = {orig: mapped for orig, mapped in mapped_choices.items() if mapped != "Ignore"}
                 df_mapped = data_df.rename(columns=rename_dict).copy()
                 for c in DB_COLUMNS:
                     if c not in df_mapped.columns:
                         df_mapped[c] = pd.NA
-
-                # 将用户填写的默认值填充到缺失/空的必填列
-                for rf in required_fields:
-                    default_val = defaults.get(rf)
-                    if default_val is not None and not (isinstance(default_val, str) and default_val.strip() == ""):
-                        if isinstance(default_val, date):
-                            df_mapped.loc[df_mapped[rf].isna() | (df_mapped[rf].astype(str).str.strip() == ""), rf] = str(default_val)
-                        else:
-                            df_mapped.loc[df_mapped[rf].isna() | (df_mapped[rf].astype(str).str.strip() == ""), rf] = str(default_val)
-
                 df_mapped["录入人"] = user["username"]
                 df_mapped["地区"] = user["region"]
-
                 df_for_db = df_mapped[DB_COLUMNS]
 
-                st.markdown("**映射后最终预览（前 10 行）：**")
+                st.markdown("**映射后预览（前 10 行）：**")
                 st.dataframe(df_for_db.head(10))
 
-                # 导入前的最终确认（此按钮只在前面检查全部通过且无阻塞时显示）
-                if st.button("✅ 确认并导入这些记录"):
-                    try:
-                        total_rows = len(df_for_db)
-                        df_no_all_empty = df_for_db.dropna(how="all").reset_index(drop=True)
-                        no_all_empty_rows = len(df_no_all_empty)
-                        df_to_store = df_no_all_empty.drop_duplicates().reset_index(drop=True)
-                        final_rows = len(df_to_store)
+                if not can_import:
+                    st.error("检测到阻塞性问题（必填字段未映射或无数据），请先解决这些问题再导入。")
+                else:
+                    # 3) 在应用映射并预览后加入：项目名称、供应商名称、询价人和询价日期这四个必填项的填写
+                    st.markdown("请在继续导入前填写以下全局必填信息（会应用到所有导入记录）：")
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    global_project = col_a.text_input("项目名称", key="bulk_project")
+                    global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
+                    global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
+                    global_date = col_d.date_input("询价日期", key="bulk_date")
 
-                        st.info(f"导入前行数: {total_rows}，去除全空行后: {no_all_empty_rows}，去重后: {final_rows}")
+                    # 验证四个全局必填项
+                    if not (global_project and global_supplier and global_enquirer and global_date):
+                        st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
+                    else:
+                        # 将这四个信息填充到数据（只填充空值位置）
+                        df_final = df_for_db.copy()
+                        df_final["项目名称"] = df_final["项目名称"].fillna(str(global_project))
+                        df_final["供应商名称"] = df_final["供应商名称"].fillna(str(global_supplier))
+                        df_final["询价人"] = df_final["询价人"].fillna(str(global_enquirer))
+                        df_final["询价日期"] = df_final["询价日期"].fillna(str(global_date))
 
-                        if final_rows == 0:
-                            st.warning("当前没有可导入的行（0 条）。请检查映射和源数据。")
-                            st.dataframe(df_for_db.head(5))
-                        else:
-                            st.markdown("将写入数据库的前 5 行（供确认）：")
-                            st.dataframe(df_to_store.head(5))
+                        st.markdown("**预备导入的最终预览（前 10 行）：**")
+                        st.dataframe(df_final.head(10))
+
+                        if st.button("✅ 确认并导入这些记录"):
                             try:
-                                df_to_store.to_sql("quotations", engine, if_exists="append", index=False)
-                                st.success(f"✅ 导入成功，共 {final_rows} 条记录已写入数据库。")
-                            except Exception as e_inner:
-                                st.error("写入数据库时出现异常：")
-                                st.exception(e_inner)
-                    except Exception as e:
-                        st.error("导入流程出现异常：")
-                        st.exception(e)
+                                df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
+                                # 额外检查：若仍有任何行在业务必填列为空（设备材料名称或品牌），阻止导入并给出错误
+                                empty_rows = df_to_store[df_to_store[["设备材料名称","品牌"]].isna().any(axis=1)]
+                                if not empty_rows.empty:
+                                    st.error("检测到部分记录在必填字段（设备材料名称、品牌）仍为空，已中止导入。请检查源文件或先使用映射/手工补全后再导入。")
+                                else:
+                                    with engine.begin() as conn:
+                                        df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
+                                    st.success(f"✅ 导入成功，共 {len(df_to_store)} 条记录。")
+                            except Exception as e:
+                                st.error(f"导入失败：{e}")
 
     # 2️⃣ 手工录入（保持不变）
     st.header("✏️ 设备手工录入")
@@ -500,7 +428,7 @@ if page == "🏠 主页面":
         cur = st.selectbox("币种", ["IDR","USD","RMB","SGD","MYR","THB"])
         desc = st.text_area("描述（可选）")
         remark = st.text_area("备注（可选）")
-        date_input = st.date_input("询价日期")
+        date = st.date_input("询价日期")
         ok = st.form_submit_button("➕ 添加记录")
     if ok:
         if not (pj and sup and inq and name and brand):
@@ -512,7 +440,7 @@ if page == "🏠 主页面":
                 设备单价,币种,描述,备注,询价日期,录入人,地区)
                 VALUES (:p,:s,:i,:n,:b,:q,:pr,:c,:d,:r,:dt,:u,:reg)
                 """), {"p": pj,"s": sup,"i": inq,"n": name,"b": brand,"q": qty,"pr": price,"c": cur,
-                        "d": desc,"r": remark,"dt": str(date_input),"u": user["username"],"reg": user["region"]})
+                        "d": desc,"r": remark,"dt": str(date),"u": user["username"],"reg": user["region"]})
             st.success("✅ 已添加记录。")
 
     # 3️⃣ 杂费录入（保持不变）

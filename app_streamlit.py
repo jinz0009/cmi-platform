@@ -380,68 +380,91 @@ if page == "🏠 主页面":
                 safe_st_dataframe(df_for_db.head(10))
 
                 # 全局信息：在单独表单内提交，避免只输入一项就继续
+                # --- START: global_form block handled with session_state below ---
+                if "bulk_applied" not in st.session_state:
+                    st.session_state["bulk_applied"] = False
+                    st.session_state["bulk_values"] = {"project": "", "supplier": "", "enquirer": "", "date": ""}
+
                 st.markdown("请先填写以下全局必填信息（会应用到所有导入记录），填写完后点击“应用全局并继续校验”：")
+
                 with st.form("global_form"):
                     col_a, col_b, col_c, col_d = st.columns(4)
-                    global_project = col_a.text_input("项目名称", key="bulk_project")
-                    global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
-                    global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
-                    global_date = col_d.date_input("询价日期", key="bulk_date")
+                    g_project = col_a.text_input("项目名称", key="bulk_project_input")
+                    g_supplier = col_b.text_input("供应商名称", key="bulk_supplier_input")
+                    g_enquirer = col_c.text_input("询价人", key="bulk_enquirer_input")
+                    g_date = col_d.date_input("询价日期", key="bulk_date_input")
                     apply_global = st.form_submit_button("应用全局并继续校验")
 
-                if not apply_global:
+                # 按钮点击后的处理：把状态保存到 session_state，给出及时反馈
+                if apply_global:
+                    if not (g_project and g_supplier and g_enquirer and g_date):
+                        st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
+                        st.session_state["bulk_applied"] = False
+                    else:
+                        st.session_state["bulk_applied"] = True
+                        st.session_state["bulk_values"] = {
+                            "project": str(g_project),
+                            "supplier": str(g_supplier),
+                            "enquirer": str(g_enquirer),
+                            "date": str(g_date)
+                        }
+                        st.success("已应用全局信息，正在进行总体必填校验...")
+
+                # 若尚未应用全局，提示并等待用户提交（不使用 st.stop() 以避免不必要中断）
+                if not st.session_state.get("bulk_applied", False):
                     st.info("请填写全局必填信息并点击“应用全局并继续校验”以继续。")
-                    st.stop()
+                else:
+                    # 已应用全局 -> 进行后续构建 df_final、总体必填校验、预览与最终导入
+                    gvals = st.session_state["bulk_values"]
+                    df_final = df_for_db.copy()
 
-                if not (global_project and global_supplier and global_enquirer and global_date):
-                    st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
-                    st.stop()
+                    # 覆盖所有行（若需要仅填充空值请改为 fillna 策略）
+                    df_final["项目名称"] = gvals["project"]
+                    df_final["供应商名称"] = gvals["supplier"]
+                    df_final["询价人"] = gvals["enquirer"]
+                    df_final["询价日期"] = gvals["date"]
 
-                # 将四个全局字段写入所有行（覆盖或改为 fillna 行为可按需切换）
-                df_final = df_for_db.copy()
-                df_final["项目名称"] = str(global_project)
-                df_final["供应商名称"] = str(global_supplier)
-                df_final["询价人"] = str(global_enquirer)
-                df_final["询价日期"] = str(global_date)
+                    overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
 
-                overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
+                    def normalize_cell(x):
+                        if pd.isna(x):
+                            return None
+                        s = str(x).strip()
+                        if s.lower() in ("", "nan", "none"):
+                            return None
+                        return s
 
-                def normalize_cell(x):
-                    if pd.isna(x):
-                        return None
-                    s = str(x).strip()
-                    if s.lower() in ("", "nan", "none"):
-                        return None
-                    return s
+                    # 业务校验（基于 df_final 的真实数据）
+                    check_df = df_final[overall_required].applymap(normalize_cell)
+                    rows_missing_mask = check_df.isna().any(axis=1)
+                    if rows_missing_mask.any():
+                        bad = normalize_for_display(df_final[rows_missing_mask])
+                        st.error(f"检测到 {rows_missing_mask.sum()} 条记录缺少总体必填字段（{', '.join(overall_required)}），已中止导入。")
+                        safe_st_dataframe(bad.head(20))
+                    else:
+                        # 全部通过
+                        df_final_disp = normalize_for_display(df_final)
+                        st.success("全部记录通过总体必填校验。请确认预览后点击确认导入。")
+                        safe_st_dataframe(df_final_disp.head(10))
 
-                # 使用规范化显示副本进行展示和问题行高亮，但业务校验基于 normalize_cell 判空
-                df_final_disp = normalize_for_display(df_final)
-                check_df = df_final.applymap(normalize_cell)[overall_required]
-                rows_missing_mask = check_df.isna().any(axis=1)
-                if rows_missing_mask.any():
-                    bad = df_final_disp[rows_missing_mask]
-                    st.error(f"检测到部分记录缺少总体必填字段（{', '.join(overall_required)} 中至少一项）：共 {len(bad)} 条记录有缺项，已中止导入。请检查源数据或补全后再导入。")
-                    safe_st_dataframe(bad.head(20))
-                    st.stop()
-
-                st.markdown("**预备导入的最终预览（前 10 行）：**")
-                safe_st_dataframe(df_final_disp.head(10))
-
-                if st.button("✅ 确认并导入这些记录"):
-                    try:
-                        df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                        final_check = df_to_store[["设备材料名称","品牌","设备单价","币种"]].applymap(normalize_cell)
-                        empty_rows_mask = final_check.isna().any(axis=1)
-                        if empty_rows_mask.any():
-                            bad2 = normalize_for_display(df_to_store[empty_rows_mask])
-                            st.error("检测到部分记录在业务必填字段（设备材料名称、品牌、设备单价、币种）仍为空，已中止导入。请检查源文件或手工补全后再导入。")
-                            safe_st_dataframe(bad2.head(20))
-                        else:
-                            with engine.begin() as conn:
-                                df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
-                            st.success(f"✅ 导入成功，共 {len(df_to_store)} 条记录。")
-                    except Exception as e:
-                        st.error(f"导入失败：{e}")
+                        if st.button("✅ 确认并导入这些记录"):
+                            try:
+                                df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
+                                final_check = df_to_store[["设备材料名称","品牌","设备单价","币种"]].applymap(normalize_cell)
+                                empty_rows_mask = final_check.isna().any(axis=1)
+                                if empty_rows_mask.any():
+                                    bad2 = normalize_for_display(df_to_store[empty_rows_mask])
+                                    st.error("检测到部分记录在业务必填字段（设备材料名称、品牌、设备单价、币种）仍为空，已中止导入。")
+                                    safe_st_dataframe(bad2.head(20))
+                                else:
+                                    with engine.begin() as conn:
+                                        df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
+                                    st.success(f"✅ 导入成功，共 {len(df_to_store)} 条记录。")
+                                    # 清除 session 标志，允许下一次新文件导入流程重新开始
+                                    st.session_state["bulk_applied"] = False
+                            except Exception as e:
+                                st.error(f"导入失败：{e}")
+                # --- END: global_form block ---
 
     # 2️⃣ 手工录入
     st.header("✏️ 设备手工录入")

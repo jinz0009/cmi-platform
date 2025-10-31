@@ -167,17 +167,22 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
 # 安全显示 DataFrame（当 Arrow 序列化失败时降级为字符串）
 def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
     try:
-        st.dataframe(df, height=height)
+        if height is None:
+            st.dataframe(df)
+        else:
+            st.dataframe(df, height=height)
     except Exception:
         # 降级：把所有非空值转换为字符串，空值保持为空字符串
         df2 = df.copy()
         for col in df2.columns:
-            # 对列进行转换，避免把 bytes 或不同类型混合导致 Arrow 错误
             try:
                 df2[col] = df2[col].where(df2[col].notna(), None).astype(object).apply(lambda x: "" if x is None else str(x))
             except Exception:
                 df2[col] = df2[col].astype(str).fillna("")
-        st.dataframe(df2, height=height)
+        if height is None:
+            st.dataframe(df2)
+        else:
+            st.dataframe(df2, height=height)
 
 # ============ 登录注册逻辑 ============
 def login():
@@ -567,3 +572,4 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理员后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+

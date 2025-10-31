@@ -1,25 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Complete app_streamlit.py — integrated, fixed, with adjusted validation rules and
-query price statistics that output full rows for historical minimum prices.
-
-Key features:
-- safe_rerun() compatibility wrapper for Streamlit versions
-- normalize_for_display / safe_st_dataframe to avoid pyarrow serialization errors
-- detect_header_from_preview + auto_map_header for smart header detection
-- Robust mapped_but_empty detection that handles Series/DataFrame/multi-source mappings
-- "填写全局信息" flow: explicit button to expand the global form (uses mapping_csv from session),
-  fills only empty cells, validates required fields, imports valid rows with download of invalid rows
-- Admin delete flow is debug-friendly and robust
-- Validation rules updated:
-  - "品牌" is not mandatory
-  - Price rule: either "设备单价" or "人工包干单价" must be provided
-- Device query page now shows overall mean/min and displays the full row(s) corresponding to the minimum device price and minimum labor price
+query price statistics that output full rows for historical minimum prices,
+and misc_costs now includes a date column. This file is the full app; save and run:
+    streamlit run main/app_streamlit.py
 """
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
-import hashlib, io, re
+import hashlib, io, re, pathlib
 from datetime import date
 
 st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
@@ -44,6 +33,9 @@ def safe_rerun():
 
 # Database engine (adjust URI for production)
 engine = create_engine("sqlite:///quotation.db", connect_args={"check_same_thread": False})
+
+# Debug: show DB path (optional)
+# st.write("DB path:", pathlib.Path(engine.url.database).absolute())
 
 # ============ Initialize DB (idempotent) ============
 with engine.begin() as conn:
@@ -90,7 +82,8 @@ with engine.begin() as conn:
         金额 REAL,
         币种 TEXT,
         录入人 TEXT,
-        地区 TEXT
+        地区 TEXT,
+        发生日期 TEXT
     )"""))
     # default admin
     conn.execute(text("""
@@ -273,10 +266,10 @@ st.sidebar.markdown(f"👤 **{user['username']}**  \n🏢 地区：{user['region
 if st.sidebar.button("退出登录", key="logout_btn"):
     logout()
 
-page = st.sidebar.radio("导航", ["🏠 录入页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"])
+page = st.sidebar.radio("导航", ["🏠 主页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 主页面", "📋 设备查询", "💰 杂费查询"])
 
 # ============ Main: Upload / Mapping / Import ============
-if page == "🏠 录入页面":
+if page == "🏠 主页面":
     st.title("📊 询价录入与查询平台")
     st.header("📂 Excel 批量录入（智能表头映射）")
     st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
@@ -657,6 +650,41 @@ if page == "🏠 录入页面":
                 except Exception as e:
                     st.error(f"添加记录失败：{e}")
 
+    # ------------------ 杂费手工录入（含发生日期列） ------------------
+    st.header("💰 手工录入杂费")
+    with st.form("manual_misc_form", clear_on_submit=True):
+        mcol1, mcol2, mcol3 = st.columns(3)
+        misc_project = mcol1.text_input("项目名称", key="misc_project_input")
+        misc_category = mcol2.text_input("杂费类目（例如运输/安装/税费）", key="misc_category_input")
+        misc_amount = mcol3.number_input("金额", min_value=0.0, format="%f", key="misc_amount_input")
+        mc1, mc2 = st.columns(2)
+        misc_currency = mc1.selectbox("币种", ["IDR","USD","RMB","SGD","MYR","THB"], key="misc_currency_input")
+        misc_note = mc2.text_input("备注（可选）", key="misc_note_input")
+        misc_date = st.date_input("发生日期", value=date.today(), key="misc_date_input")
+        submit_misc = st.form_submit_button("添加杂费记录")
+
+    if submit_misc:
+        if not (misc_project and misc_category) or misc_amount is None:
+            st.error("请填写项目名称、杂费类目和金额")
+        else:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO misc_costs (项目名称, 杂费类目, 金额, 币种, 录入人, 地区, 发生日期)
+                        VALUES (:pj, :cat, :amt, :cur, :user, :region, :occ_date)
+                    """), {
+                        "pj": misc_project,
+                        "cat": misc_category,
+                        "amt": float(misc_amount),
+                        "cur": misc_currency,
+                        "user": user["username"],
+                        "region": user["region"],
+                        "occ_date": str(misc_date)
+                    })
+                st.success("✅ 杂费记录已添加")
+            except Exception as e:
+                st.error(f"添加杂费记录失败：{e}")
+
 # ============ Search / Delete (Admin) ============
 if page == "📋 设备查询":
     st.header("📋 设备查询")
@@ -934,7 +962,7 @@ elif page == "💰 杂费查询":
     pj2 = st.text_input("按项目名称过滤", key="misc_pj")
     if st.button("🔍 搜索杂费", key="misc_search"):
         params = {"pj": f"%{pj2.lower()}%"}
-        sql = "SELECT * FROM misc_costs WHERE LOWER(项目名称) LIKE :pj"
+        sql = "SELECT id, 项目名称, 杂费类目, 金额, 币种, 录入人, 地区, 发生日期 FROM misc_costs WHERE LOWER(项目名称) LIKE :pj"
         if user["role"] != "admin":
             sql += " AND 地区 = :r"
             params["r"] = user["region"]
@@ -952,4 +980,3 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
-

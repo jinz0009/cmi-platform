@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-CMI 询价录入与查询平台 — 完整文件（包含恢复的“手工录入”逻辑，保持原有流程与修复）
-
-说明（要点）
-- 保留之前的兼容 safe_rerun、safe_st_dataframe、header detection、mapped_but_empty 修复、管理员删除等改进。
-- 按“原来那个逻辑”恢复手工录入表单到主页面（主页面中显示，与早期版本逻辑一致）。
-  - 手工录入表单放在映射/上传区域之后（与原始参考文件相同位置），但不要求必须上传文件即可使用（与原时代码相同位置，用户可在上传或不上传时手动录入）。
-- 保持全局填写/导入流程（使用 session mapping_csv 控制展开）和“仅填空处填充全局值”策略。
-- 如果要进一步调整位置或行为（比如必须上传后才显示手工区域），告诉我我会再改。
-
-保存并运行：
-    streamlit run main/app_streamlit.py
+Complete app_streamlit.py — integrated, fixed, with adjusted validation rules:
+- safe_rerun() compatibility wrapper
+- normalize_for_display / safe_st_dataframe to avoid pyarrow serialization errors
+- detect_header_from_preview + auto_map_header for smart header detection
+- Robust mapped_but_empty detection that handles Series/DataFrame/multi-source mappings
+- "填写全局信息" flow: shows explicit button to expand the global form (uses mapping_csv from session),
+  fills only empty cells, validates required fields, imports valid rows with download of invalid rows
+- Admin delete flow verifies rowids, attempts archival, deletes and checks rowcount, then refreshes
+- Validation rules updated:
+  - "品牌" is no longer a mandatory field
+  - Price rule: either "设备单价" or "人工包干单价" must be provided (at least one)
+- Manual input forms updated to reflect that "品牌" is not required
 """
 import streamlit as st
 import pandas as pd
@@ -57,7 +58,7 @@ with engine.begin() as conn:
         设备材料名称 TEXT NOT NULL,
         规格或型号 TEXT,
         描述 TEXT,
-        品牌 TEXT NOT NULL,
+        品牌 TEXT,
         单位 TEXT,
         数量确认 REAL,
         报价品牌 TEXT,
@@ -407,7 +408,7 @@ if page == "🏠 主页面":
 
                 st.success("映射已保存。现在请填写全局必填信息并提交以继续校验与导入。")
 
-    # ------------------ 恢复并显示映射后预览与全局填写（替换过的稳健实现） ------------------
+    # ====== 映射后预览 + 更稳健的“填写全局信息并导入” 流程 ======
     mapping_csv = st.session_state.get("mapping_csv", None)
     if mapping_csv:
         try:
@@ -534,6 +535,7 @@ if page == "🏠 主页面":
                     if need_global_currency and g.get("currency"):
                         fill_empty("币种", str(g["currency"]))
 
+                    # --- New validation: brand NOT required; price rule: either 设备单价 or 人工包干单价 must be present
                     def normalize_cell(x):
                         if pd.isna(x):
                             return None
@@ -542,19 +544,36 @@ if page == "🏠 主页面":
                             return None
                         return s
 
-                    overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
-                    check_df = df_final[overall_required].applymap(normalize_cell)
-                    rows_missing_mask = check_df.isna().any(axis=1)
+                    # required non-price fields (brand is NOT required)
+                    required_nonprice = ["项目名称","供应商名称","询价人","设备材料名称","币种","询价日期"]
+                    check_nonprice = df_final[required_nonprice].applymap(normalize_cell)
+                    missing_nonprice = check_nonprice.isna().any(axis=1)
 
-                    df_valid = df_final[~rows_missing_mask].copy()
-                    df_invalid = df_final[rows_missing_mask].copy()
+                    def price_has_value(row) -> bool:
+                        v1 = row.get("设备单价", None) if "设备单价" in row.index else None
+                        v2 = row.get("人工包干单价", None) if "人工包干单价" in row.index else None
+                        nv1 = normalize_cell(v1)
+                        nv2 = normalize_cell(v2)
+                        return (nv1 is not None) or (nv2 is not None)
+
+                    price_mask = df_final.apply(price_has_value, axis=1)
+                    rows_invalid_mask = missing_nonprice | (~price_mask)
+
+                    df_valid = df_final[~rows_invalid_mask].copy()
+                    df_invalid = df_final[rows_invalid_mask].copy()
 
                     imported_count = 0
                     if not df_valid.empty:
                         try:
                             df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                            final_check = df_to_store[["设备材料名称","品牌","设备单价","币种"]].applymap(normalize_cell)
-                            final_invalid_mask = final_check.isna().any(axis=1)
+                            # final check on critical cols: device name and price/labor-price rule already ensured
+                            final_check = df_to_store[["设备材料名称","设备单价","人工包干单价","币种"]].applymap(normalize_cell)
+                            # ensure price/labor present
+                            def final_price_ok(row):
+                                v1 = row.get("设备单价", None)
+                                v2 = row.get("人工包干单价", None)
+                                return (v1 is not None) or (v2 is not None)
+                            final_invalid_mask = final_check["设备材料名称"].isna() | (~df_to_store.apply(final_price_ok, axis=1))
                             if final_invalid_mask.any():
                                 to_import = df_to_store[~final_invalid_mask].copy()
                                 still_bad = df_to_store[final_invalid_mask].copy()
@@ -590,7 +609,7 @@ if page == "🏠 主页面":
     else:
         st.info("映射保存。请填写全局信息（若必要）并应用以继续导入。")
 
-    # ------------------ 恢复：手工录入（按原来逻辑显示在主页面） ------------------
+    # ------------------ 手工录入（原始逻辑，已调整：品牌不再必填） ------------------
     st.header("✏️ 手工录入设备（原始逻辑）")
     with st.form("manual_add_form_original", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -598,28 +617,43 @@ if page == "🏠 主页面":
         sup = col2.text_input("供应商名称", key="manual_supplier_orig")
         inq = col3.text_input("询价人", key="manual_enquirer_orig")
         name = st.text_input("设备材料名称", key="manual_name_orig")
-        brand = st.text_input("品牌", key="manual_brand_orig")
+        brand = st.text_input("品牌（可选）", key="manual_brand_orig")
         qty = st.number_input("数量确认", min_value=0.0, key="manual_qty_orig")
         price = st.number_input("设备单价", min_value=0.0, key="manual_price_orig")
+        labor_price = st.number_input("人工包干单价", min_value=0.0, key="manual_labor_price_orig")
         cur = st.selectbox("币种", ["IDR","USD","RMB","SGD","MYR","THB"], key="manual_currency_orig")
         desc = st.text_area("描述", key="manual_desc_orig")
         date_inq = st.date_input("询价日期", value=date.today(), key="manual_date_orig")
         submit_manual = st.form_submit_button("添加记录（手动）", key="manual_submit_orig")
 
     if submit_manual:
-        if not (pj and sup and inq and name and brand):
-            st.error("必填项不能为空：项目名称、供应商名称、询价人、设备材料名称、品牌")
+        # validate required fields except brand
+        if not (pj and sup and inq and name):
+            st.error("必填项不能为空：项目名称、供应商名称、询价人、设备材料名称")
         else:
-            try:
-                with engine.begin() as conn:
-                    conn.execute(text("""
-                        INSERT INTO quotations (项目名称,供应商名称,询价人,设备材料名称,品牌,数量确认,设备单价,币种,描述,录入人,地区,询价日期)
-                        VALUES (:p,:s,:i,:n,:b,:q,:pr,:c,:d,:u,:reg,:dt)
-                    """), {"p": pj, "s": sup, "i": inq, "n": name, "b": brand, "q": qty, "pr": price,
-                           "c": cur, "d": desc, "u": user["username"], "reg": user["region"], "dt": str(date_inq)})
-                st.success("手工记录已添加（按原逻辑）。")
-            except Exception as e:
-                st.error(f"添加记录失败：{e}")
+            # price rule: either price or labor_price must be provided
+            def has_price_value(v):
+                if pd.isna(v):
+                    return False
+                s = str(v).strip()
+                if s == "" or s.lower() in ("nan","none"):
+                    return False
+                return True
+            if not (has_price_value(price) or has_price_value(labor_price)):
+                st.error("请至少填写 设备单价 或 人工包干单价 中的一项（两者至少填一项）。")
+            else:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO quotations (项目名称,供应商名称,询价人,设备材料名称,品牌,数量确认,设备单价,人工包干单价,币种,描述,录入人,地区,询价日期)
+                            VALUES (:p,:s,:i,:n,:b,:q,:pr,:lp,:c,:d,:u,:reg,:dt)
+                        """), {"p": pj, "s": sup, "i": inq, "n": name, "b": brand if brand is not None else "",
+                               "q": qty, "pr": price if price != 0 else None,
+                               "lp": labor_price if labor_price != 0 else None,
+                               "c": cur, "d": desc, "u": user["username"], "reg": user["region"], "dt": str(date_inq)})
+                    st.success("手工记录已添加（按原逻辑，品牌为可选）。")
+                except Exception as e:
+                    st.error(f"添加记录失败：{e}")
 
 # ============ Search / Delete (Admin) ============
 if page == "📋 设备查询":
@@ -688,12 +722,14 @@ if page == "📋 设备查询":
             st.info("未找到符合条件的记录。")
         else:
             safe_st_dataframe(df)
+            # download
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 df.to_excel(writer, index=False)
             buf.seek(0)
             st.download_button("下载结果", buf, "设备查询结果.xlsx", key="download_search")
 
+            # Admin delete form (single form)
             if user["role"] == "admin":
                 st.markdown("---")
                 st.markdown("⚠️ 管理员删除：选择记录并确认。")
@@ -740,6 +776,7 @@ if page == "📋 设备查询":
                                 st.markdown("以下为将被删除的匹配记录，请核对：")
                                 safe_st_dataframe(matched_df)
 
+                                # Try archive first (ignore archive errors)
                                 try:
                                     with engine.begin() as conn:
                                         conn.execute(text(f"""
@@ -754,6 +791,7 @@ if page == "📋 设备查询":
                                 except Exception as e_arch:
                                     st.warning(f"归档异常（已忽略）：{e_arch}")
 
+                                # Execute DELETE and check rowcount
                                 delete_sql = f"DELETE FROM quotations WHERE rowid IN ({placeholders})"
                                 try:
                                     with engine.begin() as conn:
@@ -768,6 +806,7 @@ if page == "📋 设备查询":
                                 except Exception as e_del:
                                     st.error(f"执行 DELETE 时异常：{e_del}")
 
+                                # Verify after deletion
                                 try:
                                     after_df = pd.read_sql(select_verify_sql, engine)
                                     if after_df.empty:

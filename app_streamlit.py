@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Complete app_streamlit.py — integrated, fixed, with adjusted validation rules:
-- safe_rerun() compatibility wrapper
+Complete app_streamlit.py — integrated, fixed, with adjusted validation rules and
+query price statistics that output full rows for historical minimum prices.
+
+Key features:
+- safe_rerun() compatibility wrapper for Streamlit versions
 - normalize_for_display / safe_st_dataframe to avoid pyarrow serialization errors
 - detect_header_from_preview + auto_map_header for smart header detection
 - Robust mapped_but_empty detection that handles Series/DataFrame/multi-source mappings
-- "填写全局信息" flow: shows explicit button to expand the global form (uses mapping_csv from session),
+- "填写全局信息" flow: explicit button to expand the global form (uses mapping_csv from session),
   fills only empty cells, validates required fields, imports valid rows with download of invalid rows
-- Admin delete flow verifies rowids, attempts archival, deletes and checks rowcount, then refreshes
+- Admin delete flow is debug-friendly and robust
 - Validation rules updated:
-  - "品牌" is no longer a mandatory field
-  - Price rule: either "设备单价" or "人工包干单价" must be provided (at least one)
-- Manual input forms updated to reflect that "品牌" is not required
+  - "品牌" is not mandatory
+  - Price rule: either "设备单价" or "人工包干单价" must be provided
+- Device query page now shows overall mean/min and displays the full row(s) corresponding to the minimum device price and minimum labor price
 """
 import streamlit as st
 import pandas as pd
@@ -270,10 +273,10 @@ st.sidebar.markdown(f"👤 **{user['username']}**  \n🏢 地区：{user['region
 if st.sidebar.button("退出登录", key="logout_btn"):
     logout()
 
-page = st.sidebar.radio("导航", ["🏠 录入页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"])
+page = st.sidebar.radio("导航", ["🏠 主页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 主页面", "📋 设备查询", "💰 杂费查询"])
 
 # ============ Main: Upload / Mapping / Import ============
-if page == "🏠 录入页面":
+if page == "🏠 主页面":
     st.title("📊 询价录入与查询平台")
     st.header("📂 Excel 批量录入（智能表头映射）")
     st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
@@ -544,7 +547,7 @@ if page == "🏠 录入页面":
                             return None
                         return s
 
-                    # required non-price fields (brand is NOT required)
+                    # required non-price fields (brand not required)
                     required_nonprice = ["项目名称","供应商名称","询价人","设备材料名称","币种","询价日期"]
                     check_nonprice = df_final[required_nonprice].applymap(normalize_cell)
                     missing_nonprice = check_nonprice.isna().any(axis=1)
@@ -566,9 +569,8 @@ if page == "🏠 录入页面":
                     if not df_valid.empty:
                         try:
                             df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                            # final check on critical cols: device name and price/labor-price rule already ensured
+                            # final check on critical cols
                             final_check = df_to_store[["设备材料名称","设备单价","人工包干单价","币种"]].applymap(normalize_cell)
-                            # ensure price/labor present
                             def final_price_ok(row):
                                 v1 = row.get("设备单价", None)
                                 v2 = row.get("人工包干单价", None)
@@ -729,6 +731,73 @@ if page == "📋 设备查询":
             buf.seek(0)
             st.download_button("下载结果", buf, "设备查询结果.xlsx", key="download_search")
 
+            # --- Insert price statistics + full-row lowest-price display here ---
+            try:
+                df_prices = df.copy()
+                device_price_col = "设备单价"
+                labor_price_col = "人工包干单价"
+                name_col = "设备材料名称"
+
+                # normalize to numeric
+                if device_price_col in df_prices.columns:
+                    df_prices[device_price_col] = pd.to_numeric(df_prices[device_price_col], errors="coerce")
+                else:
+                    df_prices[device_price_col] = pd.Series([pd.NA] * len(df_prices))
+
+                if labor_price_col in df_prices.columns:
+                    df_prices[labor_price_col] = pd.to_numeric(df_prices[labor_price_col], errors="coerce")
+                else:
+                    df_prices[labor_price_col] = pd.Series([pd.NA] * len(df_prices))
+
+                overall = {
+                    "dev_mean": df_prices[device_price_col].mean(skipna=True),
+                    "dev_min": df_prices[device_price_col].min(skipna=True),
+                    "lab_mean": df_prices[labor_price_col].mean(skipna=True),
+                    "lab_min": df_prices[labor_price_col].min(skipna=True),
+                }
+
+                def fmt(v):
+                    return "-" if (v is None or (isinstance(v, float) and pd.isna(v))) else (f"{v:,.2f}" if isinstance(v, (int, float)) else str(v))
+
+                st.markdown("### 当前查询 — 价格统计概览（基于返回记录）")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("设备单价 — 均价", fmt(overall["dev_mean"]))
+                c2.metric("设备单价 — 最低价", fmt(overall["dev_min"]))
+                c3.metric("人工包干单价 — 均价", fmt(overall["lab_mean"]))
+                c4.metric("人工包干单价 — 最低价", fmt(overall["lab_min"]))
+
+                # show full rows matching minimum device price
+                if not pd.isna(overall["dev_min"]):
+                    dev_min_val = overall["dev_min"]
+                    dev_min_rows = df_prices[df_prices[device_price_col] == dev_min_val].copy()
+                    st.markdown("#### 设备单价 — 历史最低价对应记录（可能多条并列）")
+                    safe_st_dataframe(dev_min_rows.reset_index(drop=True))
+                else:
+                    st.info("查询结果中无有效的设备单价，无法显示最低设备单价对应记录。")
+
+                # show full rows matching minimum labor price
+                if not pd.isna(overall["lab_min"]):
+                    lab_min_val = overall["lab_min"]
+                    lab_min_rows = df_prices[df_prices[labor_price_col] == lab_min_val].copy()
+                    st.markdown("#### 人工包干单价 — 历史最低价对应记录（可能多条并列）")
+                    safe_st_dataframe(lab_min_rows.reset_index(drop=True))
+                else:
+                    st.info("查询结果中无有效的人工包干单价，无法显示最低人工单价对应记录。")
+
+                # per-device grouping (optional display)
+                if name_col in df_prices.columns:
+                    agg = df_prices.groupby(name_col).agg(
+                        设备单价_均价 = (device_price_col, lambda s: s.mean(skipna=True)),
+                        设备单价_最低 = (device_price_col, lambda s: s.min(skipna=True)),
+                        人工包干单价_均价 = (labor_price_col, lambda s: s.mean(skipna=True)),
+                        人工包干单价_最低 = (labor_price_col, lambda s: s.min(skipna=True)),
+                        样本数 = (device_price_col, "count")
+                    ).reset_index()
+                    st.markdown("#### 按设备名称分组 — 均价 / 最低价")
+                    safe_st_dataframe(agg.sort_values(by="设备单价_均价", ascending=True).head(200))
+            except Exception as e:
+                st.warning(f"计算和展示价格统计/最低价对应记录时发生异常：{e}")
+
             # Admin delete form (single form)
             if user["role"] == "admin":
                 st.markdown("---")
@@ -761,61 +830,99 @@ if page == "📋 设备查询":
                         if not selected_rowids:
                             st.warning("无有效 rowid，取消删除。")
                         else:
+                            # Debuggable deletion flow
                             placeholders = ",".join(str(int(r)) for r in selected_rowids)
-                            select_verify_sql = f"SELECT rowid, 项目名称, 供应商名称, 设备材料名称, 品牌 FROM quotations WHERE rowid IN ({placeholders})"
+                            st.write("请求删除的 rowid 列表：", selected_rowids)
+                            select_verify_sql = f"SELECT rowid, * FROM quotations WHERE rowid IN ({placeholders})"
                             try:
                                 matched_df = pd.read_sql(select_verify_sql, engine)
+                                if matched_df.empty:
+                                    st.warning("数据库中未匹配到任何所选 rowid，取消删除。")
+                                    st.write("执行的 SELECT SQL：", select_verify_sql)
+                                else:
+                                    st.markdown("匹配到以下记录（将在确认后删除）：")
+                                    safe_st_dataframe(matched_df)
                             except Exception as e:
-                                st.error(f"匹配查询失败：{e}")
+                                st.error(f"执行匹配 SELECT 时异常：{e}")
                                 matched_df = pd.DataFrame()
 
                             if matched_df.empty:
-                                st.warning("未在数据库中匹配到所选 rowid，取消删除。")
-                                st.write("执行的 SELECT SQL：", select_verify_sql)
+                                st.info("无可删除记录，停止。")
                             else:
-                                st.markdown("以下为将被删除的匹配记录，请核对：")
-                                safe_st_dataframe(matched_df)
-
-                                # Try archive first (ignore archive errors)
+                                # attempt archive in its own transaction
                                 try:
                                     with engine.begin() as conn:
+                                        conn.execute(text("""
+                                            CREATE TABLE IF NOT EXISTS deleted_quotations (
+                                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                original_rowid INTEGER,
+                                                序号 TEXT,
+                                                设备材料名称 TEXT,
+                                                规格或型号 TEXT,
+                                                描述 TEXT,
+                                                品牌 TEXT,
+                                                单位 TEXT,
+                                                数量确认 REAL,
+                                                报价品牌 TEXT,
+                                                型号 TEXT,
+                                                设备单价 REAL,
+                                                设备小计 REAL,
+                                                人工包干单价 REAL,
+                                                人工包干小计 REAL,
+                                                综合单价汇总 REAL,
+                                                币种 TEXT,
+                                                原厂品牌维保期限 TEXT,
+                                                货期 TEXT,
+                                                备注 TEXT,
+                                                询价人 TEXT,
+                                                项目名称 TEXT,
+                                                供应商名称 TEXT,
+                                                询价日期 TEXT,
+                                                录入人 TEXT,
+                                                地区 TEXT,
+                                                deleted_at TEXT,
+                                                deleted_by TEXT
+                                            )
+                                        """))
                                         conn.execute(text(f"""
-                                            INSERT INTO deleted_quotations
-                                            SELECT rowid AS original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
-                                                   报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
-                                                   币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
-                                                   CURRENT_TIMESTAMP AS deleted_at, :user AS deleted_by
+                                            INSERT INTO deleted_quotations (
+                                                original_rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
+                                                报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
+                                                币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
+                                                deleted_at, deleted_by
+                                            )
+                                            SELECT
+                                                rowid, 序号, 设备材料名称, 规格或型号, 描述, 品牌, 单位, 数量确认,
+                                                报价品牌, 型号, 设备单价, 设备小计, 人工包干单价, 人工包干小计, 综合单价汇总,
+                                                币种, 原厂品牌维保期限, 货期, 备注, 询价人, 项目名称, 供应商名称, 询价日期, 录入人, 地区,
+                                                CURRENT_TIMESTAMP, :user
                                             FROM quotations WHERE rowid IN ({placeholders})
                                         """), {"user": user["username"]})
-                                    st.write("已尝试归档（若表不存在则忽略）。")
+                                    st.write("归档完成（如果没有权限或失败会在下面显示异常）。")
                                 except Exception as e_arch:
-                                    st.warning(f"归档异常（已忽略）：{e_arch}")
+                                    st.warning(f"归档尝试失败（已记录但不阻止删除）：{e_arch}")
 
-                                # Execute DELETE and check rowcount
                                 delete_sql = f"DELETE FROM quotations WHERE rowid IN ({placeholders})"
                                 try:
                                     with engine.begin() as conn:
                                         res = conn.execute(text(delete_sql))
                                         deleted_count = getattr(res, "rowcount", None)
-                                    if deleted_count is None:
-                                        st.info("删除执行，但未获取 rowcount，请查询确认。")
-                                    elif deleted_count == 0:
-                                        st.warning("DELETE 执行成功但未删除任何行（rowcount=0）。")
-                                    else:
-                                        st.success(f"已删除 {deleted_count} 条记录。")
+                                    st.write("DELETE SQL 已执行：", delete_sql)
+                                    st.write("数据库返回的 rowcount：", deleted_count)
                                 except Exception as e_del:
                                     st.error(f"执行 DELETE 时异常：{e_del}")
+                                    deleted_count = None
 
-                                # Verify after deletion
                                 try:
                                     after_df = pd.read_sql(select_verify_sql, engine)
                                     if after_df.empty:
-                                        st.info("删除后复查未找到这些记录（删除成功）。")
+                                        st.success("删除后复查：这些 rowid 已不存在（删除成功）。")
                                     else:
-                                        st.warning("删除后仍查询到部分记录（请检查）：")
+                                        st.warning("删除后复查：部分或全部记录仍存在（删除未生效或被恢复）：")
                                         safe_st_dataframe(after_df)
+                                        st.write("仍存在的 rowid 列表：", after_df["rowid"].tolist())
                                 except Exception as e_after:
-                                    st.warning(f"删除后复核失败：{e_after}")
+                                    st.warning(f"删除后复核查询失败：{e_after}")
 
                                 safe_rerun()
             else:
@@ -845,4 +952,3 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
-

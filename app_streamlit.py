@@ -164,6 +164,21 @@ def detect_header_from_preview(df_preview: pd.DataFrame, max_header_rows=2, max_
             return best["header"], best["row"] + best["rows_used"] - 1
     return None, None
 
+# 安全显示 DataFrame（当 Arrow 序列化失败时降级为字符串）
+def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
+    try:
+        st.dataframe(df, height=height)
+    except Exception:
+        # 降级：把所有非空值转换为字符串，空值保持为空字符串
+        df2 = df.copy()
+        for col in df2.columns:
+            # 对列进行转换，避免把 bytes 或不同类型混合导致 Arrow 错误
+            try:
+                df2[col] = df2[col].where(df2[col].notna(), None).astype(object).apply(lambda x: "" if x is None else str(x))
+            except Exception:
+                df2[col] = df2[col].astype(str).fillna("")
+        st.dataframe(df2, height=height)
+
 # ============ 登录注册逻辑 ============
 def login():
     st.subheader("🔐 用户登录")
@@ -248,7 +263,7 @@ if page == "🏠 主页面":
 
         if preview is not None:
             st.markdown("**用于识别表头的前几行预览（仅展示）：**")
-            st.dataframe(preview.head(10))
+            safe_st_dataframe(preview.head(10))
 
             header_names, header_row_index = detect_header_from_preview(preview, max_header_rows=2, max_search_rows=8)
             raw_df_full = pd.read_excel(uploaded, header=None, dtype=object)
@@ -345,21 +360,28 @@ if page == "🏠 主页面":
                 df_for_db = df_mapped[DB_COLUMNS]
 
                 st.markdown("**映射后预览（前 10 行）：**")
-                st.dataframe(df_for_db.head(10))
+                safe_st_dataframe(df_for_db.head(10))
 
-                # 在预览后，先要求用户填写全局四个必填项（且必须先填写）
-                st.markdown("请先填写以下全局必填信息（会应用到所有导入记录）：")
-                col_a, col_b, col_c, col_d = st.columns(4)
-                global_project = col_a.text_input("项目名称", key="bulk_project")
-                global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
-                global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
-                global_date = col_d.date_input("询价日期", key="bulk_date")
+                # 在预览后：要求用户先填写全局四个必填项，但使用表单提交按钮（避免填写任意一项就结束）
+                st.markdown("请先填写以下全局必填信息（会应用到所有导入记录），填写完后点击“应用全局并继续校验”：")
+                with st.form("global_form"):
+                    col_a, col_b, col_c, col_d = st.columns(4)
+                    global_project = col_a.text_input("项目名称", key="bulk_project")
+                    global_supplier = col_b.text_input("供应商名称", key="bulk_supplier")
+                    global_enquirer = col_c.text_input("询价人", key="bulk_enquirer")
+                    global_date = col_d.date_input("询价日期", key="bulk_date")
+                    apply_global = st.form_submit_button("应用全局并继续校验")
 
-                if not (global_project and global_supplier and global_enquirer and global_date):
-                    st.error("必须先填写：项目名称、供应商名称、询价人和询价日期，才能进行总体必填项校验与导入。")
+                if not apply_global:
+                    st.info("请填写全局必填信息并点击“应用全局并继续校验”以继续。")
                     st.stop()
 
-                # 将这四个信息应用到所有行（按你的要求：对所有行做填充，覆盖或确保存在）
+                # apply_global 已被点击；验证四项均已填写
+                if not (global_project and global_supplier and global_enquirer and global_date):
+                    st.error("必须填写：项目名称、供应商名称、询价人和询价日期，才能继续导入。")
+                    st.stop()
+
+                # 将这四个信息应用到所有行（覆盖所有行，确保每行都有这些元信息）
                 df_final = df_for_db.copy()
                 df_final["项目名称"] = str(global_project)
                 df_final["供应商名称"] = str(global_supplier)
@@ -369,27 +391,36 @@ if page == "🏠 主页面":
                 # 现在进行总体必填项检测（按你的要求）
                 overall_required = ["项目名称","供应商名称","询价人","设备材料名称","品牌","设备单价","币种","询价日期"]
 
-                # 检查每行是否在 overall_required 中有缺失或为空字符串（设备单价 / 币种 也必须存在）
-                # 先把可能的空字符串/nan/None 统一处理，再判断
-                check_df = df_final[overall_required].astype(object).where(~df_final[overall_required].astype(str).applymap(lambda x: str(x).strip().lower() in ["", "nan", "none"]), pd.NA)
-                rows_with_missing = check_df.isna().any(axis=1)
-                if rows_with_missing.any():
-                    bad = df_final[rows_with_missing]
+                # 检查每行是否在 overall_required 中有缺失或空字符串（设备单价 / 币种 也必须存在）
+                def normalize_cell(x):
+                    if pd.isna(x):
+                        return None
+                    s = str(x).strip()
+                    if s.lower() in ("", "nan", "none"):
+                        return None
+                    return s
+
+                check_df = df_final[overall_required].applymap(normalize_cell)
+                rows_missing_mask = check_df.isna().any(axis=1)
+                if rows_missing_mask.any():
+                    bad = df_final[rows_missing_mask]
                     st.error(f"检测到部分记录缺少总体必填字段（{', '.join(overall_required)} 中至少一项）：共 {len(bad)} 条记录有缺项，已中止导入。请检查源数据或补全后再导入。")
-                    st.dataframe(bad.head(20))
+                    safe_st_dataframe(bad.head(20))
                     st.stop()
 
                 st.markdown("**预备导入的最终预览（前 10 行）：**")
-                st.dataframe(df_final.head(10))
+                safe_st_dataframe(df_final.head(10))
 
                 if st.button("✅ 确认并导入这些记录"):
                     try:
                         df_to_store = df_final.dropna(how="all").drop_duplicates().reset_index(drop=True)
                         # 额外检查：若仍有任何行在业务必填列为空，阻止导入
-                        empty_rows = df_to_store[df_to_store[["设备材料名称","品牌","设备单价","币种"]].astype(object).where(~df_to_store[["设备材料名称","品牌","设备单价","币种"]].astype(str).applymap(lambda x: str(x).strip().lower() in ["", "nan", "none"]), pd.NA).isna().any(axis=1)]
-                        if not empty_rows.empty:
+                        final_check = df_to_store[["设备材料名称","品牌","设备单价","币种"]].applymap(normalize_cell)
+                        empty_rows_mask = final_check.isna().any(axis=1)
+                        if empty_rows_mask.any():
+                            bad2 = df_to_store[empty_rows_mask]
                             st.error("检测到部分记录在业务必填字段（设备材料名称、品牌、设备单价、币种）仍为空，已中止导入。请检查源文件或手工补全后再导入。")
-                            st.dataframe(empty_rows.head(20))
+                            safe_st_dataframe(bad2.head(20))
                         else:
                             with engine.begin() as conn:
                                 df_to_store.to_sql("quotations", conn, if_exists="append", index=False)
@@ -506,7 +537,7 @@ elif page == "📋 设备查询":
             if cond:
                 sql += " WHERE " + " AND ".join(cond)
             df = pd.read_sql(sql, engine, params=params)
-            st.dataframe(df)
+            safe_st_dataframe(df)
             if not df.empty:
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
@@ -524,7 +555,7 @@ elif page == "💰 杂费查询":
             sql += " AND 地区=:r"
             params["r"] = user["region"]
         df2 = pd.read_sql(sql, engine, params=params)
-        st.dataframe(df2)
+        safe_st_dataframe(df2)
         if not df2.empty:
             buf2 = io.BytesIO()
             with pd.ExcelWriter(buf2, engine="openpyxl") as w:
@@ -535,4 +566,4 @@ elif page == "💰 杂费查询":
 elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理员后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
-    st.dataframe(users_df)
+    safe_st_dataframe(users_df)

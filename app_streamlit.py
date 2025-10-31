@@ -273,10 +273,10 @@ st.sidebar.markdown(f"👤 **{user['username']}**  \n🏢 地区：{user['region
 if st.sidebar.button("退出登录", key="logout_btn"):
     logout()
 
-page = st.sidebar.radio("导航", ["🏠 主页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 主页面", "📋 设备查询", "💰 杂费查询"])
+page = st.sidebar.radio("导航", ["🏠 录入页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"]=="admin" else ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"])
 
 # ============ Main: Upload / Mapping / Import ============
-if page == "🏠 主页面":
+if page == "🏠 录入页面":
     st.title("📊 询价录入与查询平台")
     st.header("📂 Excel 批量录入（智能表头映射）")
     st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
@@ -952,3 +952,4 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+

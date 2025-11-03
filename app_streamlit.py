@@ -24,7 +24,7 @@ def safe_rerun():
             raise RerunException()
         except Exception:
             st.session_state["_needs_refresh"] = True
-            st.warning("请手动刷新页面以查看最新状态（自动刷新在当前 Streamlit 版本不可用）。")
+            st.warning("请手动刷新页面以查看最新状态（自动刷新待aws长久存储后可用）。")
             return
     except Exception:
         st.session_state["_needs_refresh"] = True
@@ -271,7 +271,7 @@ page = st.sidebar.radio("导航", ["🏠 录入页面", "📋 设备查询", "�
 # ============ Main: Upload / Mapping / Import ============
 if page == "🏠 录入页面":
     st.title("📊 询价录入与查询平台")
-    st.header("📂 Excel 批量录入（智能表头映射）")
+    st.header("📂 Excel 批量录入")
     st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
 
     template = pd.DataFrame(columns=[c for c in DB_COLUMNS if c not in ("录入人","地区")])
@@ -605,7 +605,7 @@ if page == "🏠 录入页面":
         st.info("映射保存。请填写全局信息（若必要）并应用以继续导入。")
 
     # ------------------ 手工录入（原始逻辑，已调整：品牌不再必填） ------------------
-    st.header("✏️ 手工录入设备（原始逻辑）")
+    st.header("✏️ 手工录入设备")
     with st.form("manual_add_form_original", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         pj = col1.text_input("项目名称", key="manual_project_orig")
@@ -980,4 +980,5 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+
 

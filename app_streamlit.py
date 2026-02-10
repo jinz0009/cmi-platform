@@ -985,10 +985,98 @@ elif page == "💰 杂费查询":
 
 # ============ Admin page ============
 elif page == "👑 管理员后台" and user["role"] == "admin":
-    st.header("👑 管理后台")
-    users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
+    st.header("👑 管理员后台 — 用户管理")
+
+    # 读取用户（建议带 id，方便定位）
+    users_df = pd.read_sql("SELECT id, username, role, region FROM users ORDER BY id", engine)
     safe_st_dataframe(users_df)
 
+    st.markdown("---")
+    st.subheader("🛠️ 修改用户地区（Region）")
 
+    region_options = ["Singapore","Malaysia","Thailand","Indonesia","Vietnam","Philippines","Others","All"]
+
+    # 只允许修改非 admin 的普通用户（也可以放开，下面有保护）
+    user_choices = [
+        f"{row['id']} | {row['username']} | {row['role']} | {row['region']}"
+        for _, row in users_df.iterrows()
+    ]
+
+    with st.form("admin_update_user_region_form"):
+        target = st.selectbox("选择要修改的用户", user_choices, key="admin_update_user_select")
+        new_region = st.selectbox("新地区", region_options, key="admin_update_user_region")
+        confirm_update = st.checkbox("我确认要修改该用户地区", key="admin_update_user_confirm")
+        submit_update = st.form_submit_button("更新地区")
+
+    if submit_update:
+        try:
+            target_id = int(target.split("|", 1)[0].strip())
+            target_row = users_df[users_df["id"] == target_id]
+            if target_row.empty:
+                st.error("未找到该用户（可能已被删除），请刷新页面。")
+            else:
+                target_username = str(target_row.iloc[0]["username"])
+                target_role = str(target_row.iloc[0]["role"])
+
+                # 保护：不允许把 admin 改成奇怪地区（你也可允许）
+                if target_role == "admin" and target_username == "admin":
+                    st.warning("系统默认 admin 不建议修改地区。如确需修改，请先新增一个管理员账号再操作。")
+                elif not confirm_update:
+                    st.warning("请勾选确认框后再更新。")
+                else:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE users SET region=:r WHERE id=:id"),
+                            {"r": new_region, "id": target_id}
+                        )
+                    st.success(f"✅ 已更新用户 {target_username} 的地区为：{new_region}")
+                    st.rerun()
+        except Exception as e:
+            st.error(f"更新失败：{e}")
+
+    st.markdown("---")
+    st.subheader("🗑️ 删除用户账号")
+
+    st.caption("说明：删除账号不会自动删除该用户已录入的报价/杂费数据（这些记录仍会保留在 quotations / misc_costs 表中）。")
+
+    # 不允许删除自己 & 不允许删除默认 admin（可按需调整）
+    protected_usernames = {user["username"], "admin"}
+    deletable_rows = users_df[~users_df["username"].isin(protected_usernames)].copy()
+
+    if deletable_rows.empty:
+        st.info("当前没有可删除的用户（已保护当前登录用户与默认 admin）。")
+    else:
+        del_choices = [
+            f"{row['id']} | {row['username']} | {row['role']} | {row['region']}"
+            for _, row in deletable_rows.iterrows()
+        ]
+
+        with st.form("admin_delete_users_form"):
+            selected = st.multiselect("选择要删除的用户（可多选）", del_choices, key="admin_delete_users_select")
+            confirm_del = st.checkbox("我确认删除所选用户（不可恢复）", key="admin_delete_users_confirm")
+            submit_del = st.form_submit_button("删除用户")
+
+        if submit_del:
+            if not selected:
+                st.warning("请先选择要删除的用户。")
+            elif not confirm_del:
+                st.warning("请勾选确认框后再删除。")
+            else:
+                try:
+                    del_ids = [int(s.split("|", 1)[0].strip()) for s in selected]
+
+                    # 二次保护：防止误删自己/admin
+                    check_df = users_df[users_df["id"].isin(del_ids)]
+                    bad = check_df[check_df["username"].isin(protected_usernames)]
+                    if not bad.empty:
+                        st.error("所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。")
+                    else:
+                        placeholders = ",".join(str(i) for i in del_ids)
+                        with engine.begin() as conn:
+                            conn.execute(text(f"DELETE FROM users WHERE id IN ({placeholders})"))
+                        st.success(f"✅ 已删除 {len(del_ids)} 个用户账号")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"删除失败：{e}")
 
 

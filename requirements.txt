@@ -2,3 +2,4 @@ streamlit>=1.28
 pandas
 sqlalchemy>=2.0
 openpyxl
+psycopg2-binary

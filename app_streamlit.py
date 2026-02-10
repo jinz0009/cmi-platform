@@ -208,16 +208,24 @@ def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
 # ============ Auth UI ============
 def login_form():
     st.subheader("🔐 用户登录")
-    u = st.text_input("用户名", key="login_user")
-    p = st.text_input("密码", type="password", key="login_pass")
-    if st.button("登录", key="login_button"):
+
+    with st.form("login_form", clear_on_submit=False):
+        u = st.text_input("用户名", key="login_user")
+        p = st.text_input("密码", type="password", key="login_pass")
+        submitted = st.form_submit_button("登录")
+
+    if submitted:
         if not u or not p:
             st.error("请输入用户名和密码")
             return
+
         pw_hash = hashlib.sha256(p.encode()).hexdigest()
         with engine.begin() as conn:
-            user = conn.execute(text("SELECT username, role, region FROM users WHERE username=:u AND password=:p"),
-                                {"u": u, "p": pw_hash}).fetchone()
+            user = conn.execute(
+                text("SELECT username, role, region FROM users WHERE username=:u AND password=:p"),
+                {"u": u, "p": pw_hash}
+            ).fetchone()
+
         if user:
             st.session_state["user"] = {"username": user.username, "role": user.role, "region": user.region}
             st.success(f"登录成功：{user.username}")
@@ -225,23 +233,30 @@ def login_form():
         else:
             st.error("用户名或密码错误")
 
+
 def register_form():
     st.subheader("🧾 注册")
-    ru = st.text_input("新用户名", key="reg_user")
-    rp = st.text_input("新密码", type="password", key="reg_pass")
-    region = st.selectbox("地区", ["Singapore","Malaysia","Thailand","Indonesia","Vietnam","Philippines","Others"])
-    if st.button("注册", key="reg_button"):
+    with st.form("register_form", clear_on_submit=False):
+        ru = st.text_input("新用户名", key="reg_user")
+        rp = st.text_input("新密码", type="password", key="reg_pass")
+        region = st.selectbox("地区", ["Singapore","Malaysia","Thailand","Indonesia","Vietnam","Philippines","Others"])
+        submitted = st.form_submit_button("注册")
+
+    if submitted:
         if not ru or not rp:
             st.warning("用户名和密码不能为空")
-        else:
-            pw_hash = hashlib.sha256(rp.encode()).hexdigest()
-            try:
-                with engine.begin() as conn:
-                    conn.execute(text("INSERT INTO users (username,password,role,region) VALUES (:u,:p,'user',:r)"),
-                                 {"u": ru, "p": pw_hash, "r": region})
-                st.success("注册成功，请登录")
-            except Exception:
-                st.error("用户名已存在")
+            return
+        pw_hash = hashlib.sha256(rp.encode()).hexdigest()
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO users (username,password,role,region) VALUES (:u,:p,'user',:r)"),
+                    {"u": ru, "p": pw_hash, "r": region}
+                )
+            st.success("注册成功，请登录")
+        except Exception:
+            st.error("用户名已存在")
+
 
 def logout():
     if "user" in st.session_state:
@@ -980,5 +995,6 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+
 
 

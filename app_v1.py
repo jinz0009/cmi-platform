@@ -254,7 +254,11 @@ def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
 def safe_st_dataframe(df: pd.DataFrame, height=None):
     df_disp = normalize_for_display(df)
-    st.dataframe(df_disp, height=height)
+    if height is None:
+        st.dataframe(df_disp)
+    else:
+        st.dataframe(df_disp, height=height)
+
 
 
 def normalize_cell(x):

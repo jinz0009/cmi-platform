@@ -14,22 +14,10 @@ from datetime import date
 st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
 
 # --- Compatibility helper: safe_rerun ---
+
 def safe_rerun():
-    try:
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-            return
-        try:
-            from streamlit.runtime.scriptrunner import RerunException
-            raise RerunException()
-        except Exception:
-            st.session_state["_needs_refresh"] = True
-            st.warning("请手动刷新页面以查看最新状态（自动刷新待aws长久存储后可用）。")
-            return
-    except Exception:
-        st.session_state["_needs_refresh"] = True
-        st.warning("无法自动重启，请手动刷新浏览器页面。")
-        return
+    st.rerun()
+
 
 # Database engine (adjust URI for production)
 engine = create_engine("sqlite:///quotation.db", connect_args={"check_same_thread": False})
@@ -209,9 +197,9 @@ def safe_st_dataframe(df: pd.DataFrame, height: int | None = None):
 def login_form():
     st.subheader("🔐 用户登录")
 
-    with st.form("login_form", clear_on_submit=False):
-        u = st.text_input("用户名", key="login_user")
-        p = st.text_input("密码", type="password", key="login_pass")
+    with st.form("login_form"):
+        u = st.text_input("用户名")
+        p = st.text_input("密码", type="password")
         submitted = st.form_submit_button("登录")
 
     if submitted:
@@ -220,6 +208,7 @@ def login_form():
             return
 
         pw_hash = hashlib.sha256(p.encode()).hexdigest()
+
         with engine.begin() as conn:
             user = conn.execute(
                 text("SELECT username, role, region FROM users WHERE username=:u AND password=:p"),
@@ -227,11 +216,15 @@ def login_form():
             ).fetchone()
 
         if user:
-            st.session_state["user"] = {"username": user.username, "role": user.role, "region": user.region}
-            st.success(f"登录成功：{user.username}")
-            safe_rerun()
+            st.session_state["user"] = {
+                "username": user.username,
+                "role": user.role,
+                "region": user.region
+            }
+            st.rerun()
         else:
             st.error("用户名或密码错误")
+
 
 
 def register_form():
@@ -995,6 +988,7 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
     st.header("👑 管理后台")
     users_df = pd.read_sql("SELECT username, role, region FROM users", engine)
     safe_st_dataframe(users_df)
+
 
 
 

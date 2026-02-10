@@ -962,3 +962,41 @@ elif page == "👑 管理员后台" and user["role"] == "admin":
                         safe_rerun()
                 except Exception as e:
                     st.error(f"删除失败：{e}")
+    st.markdown("---")
+    
+st.subheader("🧩 批量修改项目名称（全库改名）")
+
+with st.form("bulk_rename_project"):
+    old_name = st.text_input("旧项目名称（完全匹配）")
+    new_name = st.text_input("新项目名称")
+    do_misc = st.checkbox("同时修改杂费 misc_costs 表", value=True)
+    confirm = st.checkbox("我确认要批量修改（不可自动恢复）")
+    submitted = st.form_submit_button("开始批量修改")
+
+if submitted:
+    if not old_name or not new_name:
+        st.error("旧项目名称 / 新项目名称 不能为空")
+    elif not confirm:
+        st.warning("请勾选确认框")
+    else:
+        try:
+            with engine.begin() as conn:
+                r1 = conn.execute(
+                    text('UPDATE quotations SET "项目名称"=:new WHERE "项目名称"=:old'),
+                    {"new": new_name, "old": old_name}
+                )
+                n1 = getattr(r1, "rowcount", None)
+
+                n2 = 0
+                if do_misc:
+                    r2 = conn.execute(
+                        text('UPDATE misc_costs SET "项目名称"=:new WHERE "项目名称"=:old'),
+                        {"new": new_name, "old": old_name}
+                    )
+                    n2 = getattr(r2, "rowcount", None)
+
+            st.success(f"✅ 已修改：quotations {n1} 条；misc_costs {n2} 条")
+            st.rerun()
+        except Exception as e:
+            st.error(f"批量修改失败：{e}")
+

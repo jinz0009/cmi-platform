@@ -524,25 +524,27 @@ if "user" not in st.session_state:
 
 user = st.session_state["user"]
 
-# ==================== TOP BAR (Wix-like nav) ====================
-top_l, top_m, top_r = st.columns([1.35, 2.2, 1.15])
+# ==================== TOP BAR (Merged right panel) ====================
+# 左侧留空，中间导航，右侧统一信息栏（标题+当前用户）
+top_blank, top_m, top_r = st.columns([1.1, 2.3, 1.4])
 
-with top_l:
-    st.markdown("### CMI 询价录入与查询平台")
-    st.caption("Tech-style • Internal Tool • Low Concurrency")
+with top_blank:
+    st.write("")  # 占位：不显示任何内容
 
 with top_m:
     pages = ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"]
     if user["role"] == "admin":
         pages.append("👑 管理员后台")
-    # Use tabs as top nav
     nav_tabs = st.tabs(pages)
 
 with top_r:
     st.markdown(
         f"""
         <div class="card">
-          <div class="title">当前用户</div>
+          <div class="title">CMI 询价录入与查询平台</div>
+          <div class="sub">Tech-style • Internal Tool • Low Concurrency</div>
+          <div class="hr" style="margin:0.75rem 0 0.8rem 0;"></div>
+          <div class="title" style="font-size:0.98rem;">当前用户</div>
           <div class="sub">
             👤 {user["username"]}<br/>
             🏢 {user["region"]}<br/>
@@ -556,6 +558,7 @@ with top_r:
         logout()
 
 ui_hr()
+
 
 # Helper to map active tab -> page name
 # Streamlit doesn't give "active tab index" directly; we render each tab's content in place.

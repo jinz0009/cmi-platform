@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Streamlit App (Postgres / Neon version)
-- Uses Postgres (Neon) instead of SQLite so data won't disappear on Streamlit Free restarts.
-- Adds primary key `id` for quotations and misc_costs. Replaces SQLite `rowid` usage with `id`.
-- Admin delete/archive works with `id`.
-Run locally:
+Streamlit App (Postgres / Neon version) — UI refresh (Wix-like tech style)
+- Keeps ALL functional modules unchanged (login/register/upload/import/search/misc/admin).
+- Only changes UI layout + CSS: top nav, dark tech theme, cards, nicer tables & buttons.
+Run:
     streamlit run app_streamlit.py
 Streamlit Cloud:
-    Set Secrets:
+    Secrets:
         DB_URL="postgresql+psycopg2://USER:PASSWORD@HOST/DB?sslmode=require"
 """
 
@@ -23,27 +22,198 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
 
-# -------------------- Page --------------------
+# ==================== PAGE CONFIG ====================
 st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
 
 
+# ==================== THEME (Wix-like Tech Dark) ====================
+THEME_CSS = """
+/* Base */
+:root{
+  --bg0: #070A12;
+  --bg1: #0B1020;
+  --card: rgba(255,255,255,0.06);
+  --card2: rgba(255,255,255,0.08);
+  --line: rgba(255,255,255,0.12);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.64);
+  --muted2: rgba(255,255,255,0.52);
+  --brand: #5B8CFF;
+  --brand2:#7C4DFF;
+  --good:#35D07F;
+  --warn:#FFB020;
+  --bad:#FF5A65;
+  --shadow: 0 12px 40px rgba(0,0,0,0.45);
+  --r: 18px;
+}
+
+html, body, [data-testid="stAppViewContainer"]{
+  background: radial-gradient(1100px 700px at 10% 10%, rgba(124,77,255,0.18), transparent 60%),
+              radial-gradient(900px 600px at 80% 20%, rgba(91,140,255,0.20), transparent 55%),
+              linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 100%) !important;
+  color: var(--text) !important;
+}
+
+[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="stToolbar"] { right: 1rem; }
+
+/* Make main wider and cleaner */
+.block-container{
+  padding-top: 1.2rem !important;
+  padding-bottom: 2.2rem !important;
+}
+
+/* Sidebar: keep available but subtle */
+[data-testid="stSidebar"]{
+  background: rgba(255,255,255,0.03) !important;
+  border-right: 1px solid var(--line) !important;
+}
+[data-testid="stSidebar"] * { color: var(--text) !important; }
+
+/* Typography */
+h1,h2,h3 { letter-spacing: 0.2px; }
+h1 { font-size: 2.0rem !important; }
+h2 { font-size: 1.35rem !important; }
+p, label, .stCaption { color: var(--muted) !important; }
+
+/* Buttons */
+.stButton > button, .stDownloadButton > button{
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  background: linear-gradient(90deg, rgba(91,140,255,0.30), rgba(124,77,255,0.22)) !important;
+  color: var(--text) !important;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+  padding: 0.55rem 0.95rem !important;
+}
+.stButton > button:hover, .stDownloadButton > button:hover{
+  transform: translateY(-1px);
+  border-color: rgba(255,255,255,0.25) !important;
+  filter: brightness(1.05);
+}
+.stButton > button:active, .stDownloadButton > button:active{
+  transform: translateY(0px);
+  filter: brightness(0.98);
+}
+
+/* Inputs */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTextArea"] textarea{
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+}
+[data-testid="stSelectbox"] div[role="combobox"]{
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  border-radius: 12px !important;
+  color: var(--text) !important;
+}
+
+/* Tabs (top nav feel) */
+.stTabs [data-baseweb="tab-list"]{
+  gap: 0.35rem !important;
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  padding: 0.35rem !important;
+  border-radius: 999px !important;
+}
+.stTabs [data-baseweb="tab"]{
+  background: transparent !important;
+  border-radius: 999px !important;
+  color: var(--muted) !important;
+  border: 1px solid transparent !important;
+  padding: 0.5rem 0.9rem !important;
+}
+.stTabs [aria-selected="true"]{
+  background: rgba(255,255,255,0.08) !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(255,255,255,0.16) !important;
+}
+
+/* Dataframe */
+[data-testid="stDataFrame"]{
+  border-radius: var(--r) !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+}
+[data-testid="stDataFrame"] *{
+  color: rgba(255,255,255,0.88) !important;
+}
+
+/* Alerts */
+.stAlert{
+  border-radius: var(--r) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* Custom cards */
+.card{
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  padding: 1.0rem 1.05rem;
+}
+.card .title{
+  font-weight: 700;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+.card .sub{
+  color: var(--muted);
+  margin-top: 0.15rem;
+  font-size: 0.92rem;
+}
+
+.hr{
+  height: 1px;
+  background: rgba(255,255,255,0.10);
+  margin: 0.8rem 0 1.0rem 0;
+}
+
+/* Hide default hamburger collapse padding issues a bit */
+[data-testid="collapsedControl"]{
+  color: rgba(255,255,255,0.7) !important;
+}
+"""
+st.markdown(f"<style>{THEME_CSS}</style>", unsafe_allow_html=True)
+
+
+def ui_card(title: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div class="card">
+          <div class="title">{title}</div>
+          {"<div class='sub'>"+subtitle+"</div>" if subtitle else ""}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ui_hr():
+    st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+
+
+# ==================== RERUN ====================
 def safe_rerun():
-    # Streamlit >= 1.27 has st.rerun()
     try:
         st.rerun()
     except Exception:
         pass
 
 
-# -------------------- DB: Postgres (Neon) --------------------
-# In Streamlit Cloud: set st.secrets["DB_URL"]
-# Locally: you can set environment variable DB_URL
+# ==================== DB: Postgres (Neon) ====================
 DB_URL = None
 try:
     DB_URL = st.secrets.get("DB_URL", None)
 except Exception:
     DB_URL = None
-
 if not DB_URL:
     DB_URL = os.getenv("DB_URL")
 
@@ -51,13 +221,11 @@ if not DB_URL:
     st.error("缺少数据库连接：请在 Streamlit Secrets 或环境变量中设置 DB_URL。")
     st.stop()
 
-# Recommended for Neon/serverless: NullPool + pool_pre_ping
 engine = create_engine(DB_URL, pool_pre_ping=True, poolclass=NullPool)
 
 
-# -------------------- Initialize DB (idempotent) --------------------
+# ==================== INIT DB (IDEMPOTENT) ====================
 with engine.begin() as conn:
-    # users
     conn.execute(text("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -68,7 +236,6 @@ with engine.begin() as conn:
     )
     """))
 
-    # quotations: add id
     conn.execute(text("""
     CREATE TABLE IF NOT EXISTS quotations (
         id SERIAL PRIMARY KEY,
@@ -99,7 +266,6 @@ with engine.begin() as conn:
     )
     """))
 
-    # misc_costs: add id
     conn.execute(text("""
     CREATE TABLE IF NOT EXISTS misc_costs (
         id SERIAL PRIMARY KEY,
@@ -113,7 +279,6 @@ with engine.begin() as conn:
     )
     """))
 
-    # deleted_quotations archive table (for admin delete audit)
     conn.execute(text("""
     CREATE TABLE IF NOT EXISTS deleted_quotations (
         id SERIAL PRIMARY KEY,
@@ -147,7 +312,6 @@ with engine.begin() as conn:
     )
     """))
 
-    # default admin (Postgres syntax)
     conn.execute(text("""
     INSERT INTO users (username, password, role, region)
     VALUES ('admin', :pw, 'admin', 'All')
@@ -155,7 +319,7 @@ with engine.begin() as conn:
     """), {"pw": hashlib.sha256("admin123".encode()).hexdigest()})
 
 
-# -------------------- Helpers --------------------
+# ==================== HELPERS ====================
 HEADER_SYNONYMS = {
     "序号": "序号", "no": "序号", "index": "序号",
     "设备材料名称": "设备材料名称", "设备名称": "设备材料名称", "material": "设备材料名称", "name": "设备材料名称",
@@ -255,10 +419,9 @@ def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
 def safe_st_dataframe(df: pd.DataFrame, height=None):
     df_disp = normalize_for_display(df)
     if height is None:
-        st.dataframe(df_disp)
+        st.dataframe(df_disp, use_container_width=True)
     else:
-        st.dataframe(df_disp, height=height)
-
+        st.dataframe(df_disp, height=height, use_container_width=True)
 
 
 def normalize_cell(x):
@@ -270,9 +433,11 @@ def normalize_cell(x):
     return s
 
 
-# -------------------- Auth --------------------
+# ==================== AUTH ====================
 def login_form():
-    st.subheader("🔐 用户登录")
+    ui_card("登录系统", "使用你的账号进入询价录入与查询平台")
+    ui_hr()
+
     with st.form("login_form"):
         u = st.text_input("用户名")
         p = st.text_input("密码", type="password")
@@ -296,7 +461,9 @@ def login_form():
 
 
 def register_form():
-    st.subheader("🧾 注册")
+    ui_card("注册账号", "创建一个普通用户账号；管理员账号由系统预置")
+    ui_hr()
+
     with st.form("register_form", clear_on_submit=False):
         ru = st.text_input("新用户名", key="reg_user")
         rp = st.text_input("新密码", type="password", key="reg_pass")
@@ -325,8 +492,29 @@ def logout():
     safe_rerun()
 
 
-# -------------------- Page Flow --------------------
+# ==================== PAGE FLOW ====================
 if "user" not in st.session_state:
+    # Top hero
+    left, right = st.columns([1.35, 1])
+    with left:
+        st.markdown("## ✨ CMI 询价录入与查询平台")
+        st.caption("深色科技风格 UI（Streamlit）｜数据存储：Neon Postgres（避免 Streamlit Free 重启导致数据丢失）")
+    with right:
+        st.markdown(
+            """
+            <div class="card">
+              <div class="title">使用说明</div>
+              <div class="sub">
+                • 先注册普通账号或使用 admin/admin123<br/>
+                • 登录后可批量导入 Excel / 查询 / 下载结果<br/>
+                • 管理员可删除记录、管理用户
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    ui_hr()
     tabs = st.tabs(["🔑 登录", "🧾 注册"])
     with tabs[0]:
         login_form()
@@ -335,19 +523,49 @@ if "user" not in st.session_state:
     st.stop()
 
 user = st.session_state["user"]
-st.sidebar.markdown(f"👤 **{user['username']}**  \n🏢 地区：{user['region']}  \n🔑 角色：{user['role']}")
-if st.sidebar.button("退出登录", key="logout_btn"):
-    logout()
 
-page = st.sidebar.radio(
-    "导航",
-    ["🏠 录入页面", "📋 设备查询", "💰 杂费查询", "👑 管理员后台"] if user["role"] == "admin"
-    else ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"]
-)
+# ==================== TOP BAR (Wix-like nav) ====================
+top_l, top_m, top_r = st.columns([1.35, 2.2, 1.15])
 
-# -------------------- Main: Upload / Import --------------------
-if page == "🏠 录入页面":
-    st.title("📊 询价录入与查询平台")
+with top_l:
+    st.markdown("### CMI 询价录入与查询平台")
+    st.caption("Tech-style • Internal Tool • Low Concurrency")
+
+with top_m:
+    pages = ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"]
+    if user["role"] == "admin":
+        pages.append("👑 管理员后台")
+    # Use tabs as top nav
+    nav_tabs = st.tabs(pages)
+
+with top_r:
+    st.markdown(
+        f"""
+        <div class="card">
+          <div class="title">当前用户</div>
+          <div class="sub">
+            👤 {user["username"]}<br/>
+            🏢 {user["region"]}<br/>
+            🔑 {user["role"]}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("退出登录", key="logout_btn_top"):
+        logout()
+
+ui_hr()
+
+# Helper to map active tab -> page name
+# Streamlit doesn't give "active tab index" directly; we render each tab's content in place.
+# We'll simply put each page's original logic into each tab block.
+
+# ==================== PAGE: HOME / INPUT ====================
+with nav_tabs[0]:
+    ui_card("录入中心", "支持 Excel 批量录入 + 手工录入（设备 / 杂费）")
+    ui_hr()
+
     st.header("📂 Excel 批量录入")
     st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
 
@@ -368,7 +586,7 @@ if page == "🏠 录入页面":
 
         try:
             preview = pd.read_excel(uploaded, header=None, nrows=50, dtype=object)
-            safe_st_dataframe(preview.head(10))
+            safe_st_dataframe(preview.head(10), height=320)
         except Exception as e:
             st.error(f"读取预览失败：{e}")
             preview = None
@@ -399,6 +617,8 @@ if page == "🏠 录入页面":
             for col in data_df.columns:
                 auto_val = auto_map_header(col)
                 auto_defaults[col] = auto_val if (auto_val and auto_val in mapping_targets) else "Ignore"
+
+            st.markdown("系统已为每一列生成建议映射（你可以直接应用，或修改后提交）。")
 
             mapped_choices = {}
             with st.form("mapping_form", clear_on_submit=False):
@@ -447,7 +667,7 @@ if page == "🏠 录入页面":
 
         st.markdown("**映射后预览（前 10 行）：**")
         if df_for_db is not None:
-            safe_st_dataframe(df_for_db.head(10))
+            safe_st_dataframe(df_for_db.head(10), height=320)
         else:
             st.info("映射数据无法预览，请重新映射。")
 
@@ -457,7 +677,7 @@ if page == "🏠 录入页面":
         col_show, col_hint = st.columns([1, 6])
         if col_show.button("➡️ 填写/查看全局信息并应用导入", key="open_global_form_btn"):
             st.session_state["show_global_form"] = True
-        col_hint.markdown("（若需要对空值进行统一填充，例如币种/项目/供应商/询价人，请展开并填写全局信息）")
+        col_hint.caption("若需要对空值统一填充（币种/项目/供应商/询价人），请展开并填写全局信息。")
 
         if st.session_state["show_global_form"]:
             if "bulk_values" not in st.session_state:
@@ -471,7 +691,7 @@ if page == "🏠 录入页面":
 
             need_global_currency = column_has_empty_currency(df_for_db)
 
-            st.markdown("请填写全局必填信息（仅填充空值）。填写完后点击“应用全局并继续校验”：")
+            st.markdown("#### 全局信息（仅填充空值）")
             with st.form("global_form_v2"):
                 g1, g2, g3, g4, g5 = st.columns(5)
                 g_project = g1.text_input("项目名称", value=st.session_state["bulk_values"].get("project", ""))
@@ -563,7 +783,6 @@ if page == "🏠 录入页面":
                     if not df_valid.empty:
                         try:
                             df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
-                            # IMPORTANT: do NOT include 'id' column; Postgres will auto-generate id
                             with engine.begin() as conn:
                                 df_to_store.to_sql("quotations", conn, if_exists="append", index=False, method="multi")
                             imported_count = len(df_to_store)
@@ -575,7 +794,7 @@ if page == "🏠 录入页面":
 
                     if not df_invalid.empty:
                         st.warning(f"以下 {len(df_invalid)} 条记录缺少总体必填字段，未被导入，请修正后重新导入：")
-                        safe_st_dataframe(df_invalid.head(50))
+                        safe_st_dataframe(df_invalid.head(50), height=360)
                         buf_bad = io.BytesIO()
                         with pd.ExcelWriter(buf_bad, engine="openpyxl") as w:
                             df_invalid.to_excel(w, index=False)
@@ -584,6 +803,7 @@ if page == "🏠 录入页面":
 
                     st.session_state["bulk_applied"] = False
 
+    ui_hr()
     st.header("✏️ 手工录入设备")
     with st.form("manual_add_form_original", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -626,6 +846,7 @@ if page == "🏠 录入页面":
                 except Exception as e:
                     st.error(f"添加记录失败：{e}")
 
+    ui_hr()
     st.header("💰 手工录入杂费")
     with st.form("manual_misc_form", clear_on_submit=True):
         mcol1, mcol2, mcol3 = st.columns(3)
@@ -662,9 +883,13 @@ if page == "🏠 录入页面":
                 st.error(f"添加杂费记录失败：{e}")
 
 
-# -------------------- Search: quotations --------------------
-elif page == "📋 设备查询":
+# ==================== PAGE: SEARCH QUOTATIONS ====================
+with nav_tabs[1]:
+    ui_card("设备查询", "按关键词 / 项目 / 供应商 / 品牌 / 地区筛选，并支持导出 Excel")
+    ui_hr()
+
     st.header("📋 设备查询")
+
     kw = st.text_input("关键词（多个空格分词）", key="search_kw")
     search_fields = st.multiselect(
         "搜索字段（留空为默认）",
@@ -733,7 +958,7 @@ elif page == "📋 设备查询":
         if df.empty:
             st.info("未找到符合条件的记录。")
         else:
-            safe_st_dataframe(df)
+            safe_st_dataframe(df, height=520)
 
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -741,7 +966,7 @@ elif page == "📋 设备查询":
             buf.seek(0)
             st.download_button("下载结果", buf, "设备查询结果.xlsx", key="download_search")
 
-            # Price stats
+            # Price stats (unchanged)
             try:
                 df_prices = df.copy()
                 device_price_col = "设备单价"
@@ -761,6 +986,7 @@ elif page == "📋 设备查询":
                 def fmt(v):
                     return "-" if (v is None or (isinstance(v, float) and pd.isna(v))) else f"{v:,.2f}"
 
+                ui_hr()
                 st.markdown("### 当前查询 — 价格统计概览（基于返回记录）")
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("设备单价 — 均价", fmt(overall["dev_mean"]))
@@ -771,12 +997,12 @@ elif page == "📋 设备查询":
                 if not pd.isna(overall["dev_min"]):
                     dev_min_rows = df_prices[df_prices[device_price_col] == overall["dev_min"]].copy()
                     st.markdown("#### 设备单价 — 历史最低价对应记录（可能多条并列）")
-                    safe_st_dataframe(dev_min_rows.reset_index(drop=True))
+                    safe_st_dataframe(dev_min_rows.reset_index(drop=True), height=260)
 
                 if not pd.isna(overall["lab_min"]):
                     lab_min_rows = df_prices[df_prices[labor_price_col] == overall["lab_min"]].copy()
                     st.markdown("#### 人工包干单价 — 历史最低价对应记录（可能多条并列）")
-                    safe_st_dataframe(lab_min_rows.reset_index(drop=True))
+                    safe_st_dataframe(lab_min_rows.reset_index(drop=True), height=260)
 
                 if name_col in df_prices.columns:
                     agg = df_prices.groupby(name_col).agg(
@@ -787,15 +1013,14 @@ elif page == "📋 设备查询":
                         样本数=(device_price_col, "count")
                     ).reset_index()
                     st.markdown("#### 按设备名称分组 — 均价 / 最低价")
-                    safe_st_dataframe(agg.sort_values(by="设备单价_均价", ascending=True).head(200))
+                    safe_st_dataframe(agg.sort_values(by="设备单价_均价", ascending=True).head(200), height=360)
             except Exception as e:
                 st.warning(f"计算价格统计时发生异常：{e}")
 
-            # Admin delete by id
+            # Admin delete by id (unchanged)
             if user["role"] == "admin":
-                st.markdown("---")
-                st.markdown("⚠️ 管理员删除：选择记录并确认（按 id 删除）。")
-
+                ui_hr()
+                st.markdown("### ⚠️ 管理员删除（按 id 删除）")
                 choices = []
                 for _, row in df.iterrows():
                     rid = int(row["id"])
@@ -825,8 +1050,6 @@ elif page == "📋 设备查询":
                             st.warning("无有效 id，取消删除。")
                         else:
                             placeholders = ",".join(str(int(i)) for i in selected_ids)
-
-                            # archive then delete
                             try:
                                 with engine.begin() as conn:
                                     conn.execute(text(f"""
@@ -843,7 +1066,6 @@ elif page == "📋 设备查询":
                                             :user
                                         FROM quotations WHERE id IN ({placeholders})
                                     """), {"user": user["username"]})
-
                                     conn.execute(text(f"DELETE FROM quotations WHERE id IN ({placeholders})"))
                                 st.success("✅ 已删除并归档所选记录。")
                                 safe_rerun()
@@ -853,8 +1075,11 @@ elif page == "📋 设备查询":
                 st.info("仅管理员可删除记录。")
 
 
-# -------------------- Search: misc_costs --------------------
-elif page == "💰 杂费查询":
+# ==================== PAGE: SEARCH MISC ====================
+with nav_tabs[2]:
+    ui_card("杂费查询", "按项目名称检索杂费记录，支持导出 Excel")
+    ui_hr()
+
     st.header("💰 杂费查询")
     pj2 = st.text_input("按项目名称过滤", key="misc_pj")
 
@@ -876,7 +1101,7 @@ elif page == "💰 杂费查询":
             st.error(f"查询失败：{e}")
             df2 = pd.DataFrame()
 
-        safe_st_dataframe(df2)
+        safe_st_dataframe(df2, height=520)
         if not df2.empty:
             buf2 = io.BytesIO()
             with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
@@ -885,82 +1110,84 @@ elif page == "💰 杂费查询":
             st.download_button("下载杂费结果", buf2, "misc_costs.xlsx", key="download_misc")
 
 
-# -------------------- Admin page --------------------
-elif page == "👑 管理员后台" and user["role"] == "admin":
-    st.header("👑 管理员后台 — 用户管理")
-    users_df = pd.read_sql(text("SELECT id, username, role, region FROM users ORDER BY id"), engine)
-    safe_st_dataframe(users_df)
+# ==================== PAGE: ADMIN ====================
+if user["role"] == "admin":
+    with nav_tabs[3]:
+        ui_card("管理员后台", "用户管理：查看 / 修改地区 / 删除账号（保护当前用户与默认 admin）")
+        ui_hr()
 
-    st.markdown("---")
-    st.subheader("🛠️ 修改用户地区（Region）")
+        st.header("👑 管理员后台 — 用户管理")
+        users_df = pd.read_sql(text("SELECT id, username, role, region FROM users ORDER BY id"), engine)
+        safe_st_dataframe(users_df, height=420)
 
-    region_options = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
-    user_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in users_df.iterrows()]
+        ui_hr()
+        st.subheader("🛠️ 修改用户地区（Region）")
 
-    with st.form("admin_update_user_region_form"):
-        target = st.selectbox("选择要修改的用户", user_choices, key="admin_update_user_select")
-        new_region = st.selectbox("新地区", region_options, key="admin_update_user_region")
-        confirm_update = st.checkbox("我确认要修改该用户地区", key="admin_update_user_confirm")
-        submit_update = st.form_submit_button("更新地区")
+        region_options = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
+        user_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in users_df.iterrows()]
 
-    if submit_update:
-        try:
-            target_id = int(target.split("|", 1)[0].strip())
-            target_row = users_df[users_df["id"] == target_id]
-            if target_row.empty:
-                st.error("未找到该用户，请刷新页面。")
-            else:
-                target_username = str(target_row.iloc[0]["username"])
-                target_role = str(target_row.iloc[0]["role"])
+        with st.form("admin_update_user_region_form"):
+            target = st.selectbox("选择要修改的用户", user_choices, key="admin_update_user_select")
+            new_region = st.selectbox("新地区", region_options, key="admin_update_user_region")
+            confirm_update = st.checkbox("我确认要修改该用户地区", key="admin_update_user_confirm")
+            submit_update = st.form_submit_button("更新地区")
 
-                if target_role == "admin" and target_username == "admin":
-                    st.warning("系统默认 admin 不建议修改地区。")
-                elif not confirm_update:
-                    st.warning("请勾选确认框后再更新。")
+        if submit_update:
+            try:
+                target_id = int(target.split("|", 1)[0].strip())
+                target_row = users_df[users_df["id"] == target_id]
+                if target_row.empty:
+                    st.error("未找到该用户，请刷新页面。")
                 else:
-                    with engine.begin() as conn:
-                        conn.execute(text("UPDATE users SET region=:r WHERE id=:id"), {"r": new_region, "id": target_id})
-                    st.success(f"✅ 已更新用户 {target_username} 的地区为：{new_region}")
-                    safe_rerun()
-        except Exception as e:
-            st.error(f"更新失败：{e}")
+                    target_username = str(target_row.iloc[0]["username"])
+                    target_role = str(target_row.iloc[0]["role"])
 
-    st.markdown("---")
-    st.subheader("🗑️ 删除用户账号")
-    st.caption("说明：删除账号不会自动删除该用户已录入的报价/杂费数据（数据仍保留在 quotations / misc_costs 表中）。")
-
-    protected_usernames = {user["username"], "admin"}
-    deletable_rows = users_df[~users_df["username"].isin(protected_usernames)].copy()
-
-    if deletable_rows.empty:
-        st.info("当前没有可删除的用户（已保护当前登录用户与默认 admin）。")
-    else:
-        del_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in deletable_rows.iterrows()]
-
-        with st.form("admin_delete_users_form"):
-            selected = st.multiselect("选择要删除的用户（可多选）", del_choices, key="admin_delete_users_select")
-            confirm_del = st.checkbox("我确认删除所选用户（不可恢复）", key="admin_delete_users_confirm")
-            submit_del = st.form_submit_button("删除用户")
-
-        if submit_del:
-            if not selected:
-                st.warning("请先选择要删除的用户。")
-            elif not confirm_del:
-                st.warning("请勾选确认框后再删除。")
-            else:
-                try:
-                    del_ids = [int(s.split("|", 1)[0].strip()) for s in selected]
-                    check_df = users_df[users_df["id"].isin(del_ids)]
-                    bad = check_df[check_df["username"].isin(protected_usernames)]
-                    if not bad.empty:
-                        st.error("所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。")
+                    if target_role == "admin" and target_username == "admin":
+                        st.warning("系统默认 admin 不建议修改地区。")
+                    elif not confirm_update:
+                        st.warning("请勾选确认框后再更新。")
                     else:
-                        placeholders = ",".join(str(i) for i in del_ids)
                         with engine.begin() as conn:
-                            conn.execute(text(f"DELETE FROM users WHERE id IN ({placeholders})"))
-                        st.success(f"✅ 已删除 {len(del_ids)} 个用户账号")
+                            conn.execute(text("UPDATE users SET region=:r WHERE id=:id"), {"r": new_region, "id": target_id})
+                        st.success(f"✅ 已更新用户 {target_username} 的地区为：{new_region}")
                         safe_rerun()
-                except Exception as e:
-                    st.error(f"删除失败：{e}")
-    st.markdown("---")
-    
+            except Exception as e:
+                st.error(f"更新失败：{e}")
+
+        ui_hr()
+        st.subheader("🗑️ 删除用户账号")
+        st.caption("说明：删除账号不会自动删除该用户已录入的报价/杂费数据（数据仍保留在 quotations / misc_costs 表中）。")
+
+        protected_usernames = {user["username"], "admin"}
+        deletable_rows = users_df[~users_df["username"].isin(protected_usernames)].copy()
+
+        if deletable_rows.empty:
+            st.info("当前没有可删除的用户（已保护当前登录用户与默认 admin）。")
+        else:
+            del_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in deletable_rows.iterrows()]
+
+            with st.form("admin_delete_users_form"):
+                selected = st.multiselect("选择要删除的用户（可多选）", del_choices, key="admin_delete_users_select")
+                confirm_del = st.checkbox("我确认删除所选用户（不可恢复）", key="admin_delete_users_confirm")
+                submit_del = st.form_submit_button("删除用户")
+
+            if submit_del:
+                if not selected:
+                    st.warning("请先选择要删除的用户。")
+                elif not confirm_del:
+                    st.warning("请勾选确认框后再删除。")
+                else:
+                    try:
+                        del_ids = [int(s.split("|", 1)[0].strip()) for s in selected]
+                        check_df = users_df[users_df["id"].isin(del_ids)]
+                        bad = check_df[check_df["username"].isin(protected_usernames)]
+                        if not bad.empty:
+                            st.error("所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。")
+                        else:
+                            placeholders = ",".join(str(i) for i in del_ids)
+                            with engine.begin() as conn:
+                                conn.execute(text(f"DELETE FROM users WHERE id IN ({placeholders})"))
+                            st.success(f"✅ 已删除 {len(del_ids)} 个用户账号")
+                            safe_rerun()
+                    except Exception as e:
+                        st.error(f"删除失败：{e}")

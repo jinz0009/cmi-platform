@@ -498,15 +498,14 @@ if "user" not in st.session_state:
     left, right = st.columns([1.35, 1])
     with left:
         st.markdown("## ✨ CMI 询价录入与查询平台")
-        st.caption("深色科技风格 UI（Streamlit）｜数据存储：Neon Postgres（避免 Streamlit Free 重启导致数据丢失）")
     with right:
         st.markdown(
             """
             <div class="card">
               <div class="title">使用说明</div>
               <div class="sub">
-                • 先注册普通账号或使用 admin/admin123<br/>
-                • 登录后可批量导入 Excel / 查询 / 下载结果<br/>
+                • 自行注册普通账号，如需管理员账号请联系APAC<br/>
+                • 登录后可批量导入 询价记录 / 查询 / 下载结果<br/>
                 • 管理员可删除记录、管理用户
               </div>
             </div>

@@ -316,7 +316,7 @@ with engine.begin() as conn:
     INSERT INTO users (username, password, role, region)
     VALUES ('admin', :pw, 'admin', 'All')
     ON CONFLICT (username) DO NOTHING
-    """), {"pw": hashlib.sha256("admin6736u".encode()).hexdigest()})
+    """), {"pw": hashlib.sha256("admin".encode()).hexdigest()})
 
 
 # ==================== HELPERS ====================

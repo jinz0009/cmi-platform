@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit App (Postgres / Neon version) — bilingual (CN/EN switchable)
-- Keeps ALL functional modules unchanged (login/register/upload/import/search/misc/admin).
+- Keeps ALL functional modules unchanged (login/upload/import/search/misc/admin).
 - Keeps database schema unchanged (Chinese column names stay the same).
+- User accounts are created by admin only.
 - Adds website language switcher for users (中文 / English).
+- Adds bilingual keyword/alias search (e.g. 海康 / hikvision / hkvision).
 Run:
     streamlit run app_streamlit.py
 Streamlit Cloud:
@@ -197,9 +199,8 @@ I18N = {
         "app_subtitle": "High Tech • Effective Solution • Quick Use",
         "lang_label": "语言",
         "help_title": "使用说明",
-        "help_text": "• 自行注册普通账号，如需管理员账号请联系APAC<br/>• 登录后可批量导入 询价记录 / 查询 / 下载结果<br/>• 管理员可删除记录、管理用户",
+        "help_text": "• 普通用户账号由管理员统一创建与分配<br/>• 登录后可批量导入询价记录 / 查询 / 下载结果<br/>• 管理员可创建账号、删除记录、管理用户",
         "login_tab": "🔑 登录",
-        "register_tab": "🧾 注册",
         "login_system": "登录系统",
         "login_sub": "使用你的账号进入询价录入与查询平台",
         "username": "用户名",
@@ -207,15 +208,6 @@ I18N = {
         "login_btn": "登录",
         "enter_user_pass": "请输入用户名和密码",
         "wrong_user_pass": "用户名或密码错误",
-        "register_account": "注册账号",
-        "register_sub": "创建一个普通用户账号；管理员账号由系统预置",
-        "new_username": "新用户名",
-        "new_password": "新密码",
-        "region": "地区",
-        "register_btn": "注册",
-        "empty_user_pass": "用户名和密码不能为空",
-        "register_success": "注册成功，请登录",
-        "register_fail": "用户名已存在或数据库异常",
         "current_user": "当前用户",
         "logout": "退出登录",
         "page_input": "🏠 录入页面",
@@ -301,6 +293,7 @@ I18N = {
         "labor_min_rows": "#### 人工包干单价 — 历史最低价对应记录（可能多条并列）",
         "group_by_name": "#### 按设备名称分组 — 均价 / 最低价",
         "stats_fail": "计算价格统计时发生异常：{}",
+        "search_alias_caption": "支持中英文关键词、品牌别名和常见缩写搜索，例如：海康 / hikvision / hkvision",
         "admin_delete_title": "### ⚠️ 管理员删除（按 id 删除）",
         "admin_select_delete": "选中要删除的记录",
         "admin_confirm_delete": "我确认删除所选记录（不可恢复）",
@@ -317,7 +310,7 @@ I18N = {
         "search_misc_btn": "🔍 搜索杂费",
         "download_misc": "下载杂费结果",
         "admin_panel": "管理员后台",
-        "admin_panel_sub": "用户管理：查看 / 修改地区 / 删除账号（保护当前用户与默认 admin）",
+        "admin_panel_sub": "用户管理：创建 / 查看 / 修改地区 / 删除账号（保护当前用户与默认 admin）",
         "admin_user_mgmt": "👑 管理员后台 — 用户管理",
         "update_region_title": "🛠️ 修改用户地区（Region）",
         "select_user_update": "选择要修改的用户",
@@ -340,15 +333,25 @@ I18N = {
         "db_missing": "缺少数据库连接：请在 Streamlit Secrets 或环境变量中设置 DB_URL。",
         "user": "用户",
         "role": "角色",
+        "admin_create_user_title": "➕ 新增用户账号",
+        "admin_create_user_sub": "普通用户账号由管理员统一创建并分配地区",
+        "admin_create_username": "用户名",
+        "admin_create_password": "密码",
+        "admin_create_region": "地区",
+        "admin_create_confirm": "我确认新增该用户账号",
+        "admin_create_btn": "创建用户",
+        "admin_create_success": "✅ 已创建用户 {}，地区为：{}",
+        "admin_create_fail": "创建用户失败：用户名已存在或数据库异常",
+        "admin_create_confirm_first": "请勾选确认框后再创建用户",
+        "empty_user_pass": "用户名和密码不能为空",
     },
     "en": {
         "app_title": "CMI Quotation Input & Query Platform",
         "app_subtitle": "High Tech • Effective Solution • Quick Use",
         "lang_label": "Language",
         "help_title": "Instructions",
-        "help_text": "• You may register a normal user account by yourself; for an admin account, please contact APAC<br/>• After login, you can batch import quotation records / search / download results<br/>• Admins can delete records and manage users",
+        "help_text": "• Normal user accounts are created and assigned by admin only<br/>• After login, you can batch import quotation records / search / download results<br/>• Admins can create accounts, delete records, and manage users",
         "login_tab": "🔑 Login",
-        "register_tab": "🧾 Register",
         "login_system": "Login",
         "login_sub": "Use your account to access the quotation input and query platform",
         "username": "Username",
@@ -356,15 +359,6 @@ I18N = {
         "login_btn": "Login",
         "enter_user_pass": "Please enter username and password",
         "wrong_user_pass": "Incorrect username or password",
-        "register_account": "Register Account",
-        "register_sub": "Create a normal user account; admin account is preconfigured by the system",
-        "new_username": "New Username",
-        "new_password": "New Password",
-        "region": "Region",
-        "register_btn": "Register",
-        "empty_user_pass": "Username and password cannot be empty",
-        "register_success": "Registration successful. Please log in.",
-        "register_fail": "Username already exists or database error",
         "current_user": "Current User",
         "logout": "Logout",
         "page_input": "🏠 Input",
@@ -450,6 +444,7 @@ I18N = {
         "labor_min_rows": "#### Labor Lump-Sum Unit Price — Records corresponding to the historical minimum price (ties possible)",
         "group_by_name": "#### Grouped by Device Name — Average / Minimum",
         "stats_fail": "Exception occurred while calculating price statistics: {}",
+        "search_alias_caption": "Supports Chinese/English keywords, brand aliases, and common abbreviations, e.g. 海康 / hikvision / hkvision",
         "admin_delete_title": "### ⚠️ Admin Delete (delete by id)",
         "admin_select_delete": "Select records to delete",
         "admin_confirm_delete": "I confirm deletion of the selected records (cannot be undone)",
@@ -466,7 +461,7 @@ I18N = {
         "search_misc_btn": "🔍 Search Misc Costs",
         "download_misc": "Download Misc Results",
         "admin_panel": "Admin Panel",
-        "admin_panel_sub": "User management: view / update region / delete accounts (protect current user and default admin)",
+        "admin_panel_sub": "User management: create / view / update region / delete accounts (protect current user and default admin)",
         "admin_user_mgmt": "👑 Admin Panel — User Management",
         "update_region_title": "🛠️ Update User Region",
         "select_user_update": "Select user to update",
@@ -489,6 +484,17 @@ I18N = {
         "db_missing": "Database connection is missing. Please set DB_URL in Streamlit Secrets or environment variables.",
         "user": "User",
         "role": "Role",
+        "admin_create_user_title": "➕ Create User Account",
+        "admin_create_user_sub": "Normal user accounts are created by admin and assigned to a region",
+        "admin_create_username": "Username",
+        "admin_create_password": "Password",
+        "admin_create_region": "Region",
+        "admin_create_confirm": "I confirm creating this user account",
+        "admin_create_btn": "Create User",
+        "admin_create_success": "✅ User {} has been created with region: {}",
+        "admin_create_fail": "Failed to create user: username already exists or database error",
+        "admin_create_confirm_first": "Please tick the confirmation checkbox before creating the user",
+        "empty_user_pass": "Username and password cannot be empty",
     }
 }
 
@@ -674,6 +680,63 @@ DB_COLUMNS = [
     "询价人", "项目名称", "供应商名称", "询价日期", "录入人", "地区"
 ]
 
+# ==================== SEARCH SYNONYMS ====================
+SYNONYM_GROUPS = [
+    ["海康威视", "海康", "hikvision", "hkvision"],
+    ["华为", "huawei"],
+    ["中兴", "zte", "zte corporation"],
+    ["新华三", "h3c"],
+    ["思科", "cisco"],
+    ["瞻博", "juniper"],
+    ["锐捷", "ruijie"],
+    ["戴尔", "dell", "dell emc"],
+    ["惠普", "hp", "hewlett packard", "hpe"],
+    ["联想", "lenovo"],
+    ["浪潮", "inspur"],
+    ["深信服", "sangfor"],
+    ["飞塔", "fortinet"],
+    ["帕洛阿尔托", "palo alto", "palo alto networks", "pan"],
+    ["阿里云", "aliyun", "alibaba cloud"],
+    ["腾讯云", "tencent cloud"],
+    ["亚马逊云", "aws", "amazon web services"],
+    ["微软云", "azure", "microsoft azure"],
+    ["谷歌云", "gcp", "google cloud"],
+]
+
+SYNONYM_MAP = {}
+for group in SYNONYM_GROUPS:
+    normalized_group = []
+    for item in group:
+        s = str(item).strip().lower()
+        if s:
+            normalized_group.append(s)
+    normalized_group = list(dict.fromkeys(normalized_group))
+    for item in normalized_group:
+        SYNONYM_MAP[item] = normalized_group
+
+
+def expand_keywords(token: str):
+    if token is None:
+        return []
+    t0 = str(token).strip()
+    t = t0.lower()
+    if not t:
+        return []
+    if t in SYNONYM_MAP:
+        return SYNONYM_MAP[t]
+    return [t]
+
+
+def expand_query_tokens(tokens):
+    expanded = []
+    seen = set()
+    for token in tokens:
+        for item in expand_keywords(token):
+            if item not in seen:
+                seen.add(item)
+                expanded.append(item)
+    return expanded
+
 
 def auto_map_header(orig_header: str):
     if orig_header is None:
@@ -795,32 +858,6 @@ def login_form():
             st.error(t("wrong_user_pass"))
 
 
-def register_form():
-    ui_card(t("register_account"), t("register_sub"))
-    ui_hr()
-
-    with st.form("register_form", clear_on_submit=False):
-        ru = st.text_input(t("new_username"), key="reg_user")
-        rp = st.text_input(t("new_password"), type="password", key="reg_pass")
-        region = st.selectbox(t("region"), REGION_OPTIONS)
-        submitted = st.form_submit_button(t("register_btn"))
-
-    if submitted:
-        if not ru or not rp:
-            st.warning(t("empty_user_pass"))
-            return
-        pw_hash = hashlib.sha256(rp.encode()).hexdigest()
-        try:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO users (username,password,role,region) VALUES (:u,:p,'user',:r)"),
-                    {"u": ru, "p": pw_hash, "r": region}
-                )
-            st.success(t("register_success"))
-        except Exception:
-            st.error(t("register_fail"))
-
-
 def logout():
     if "user" in st.session_state:
         del st.session_state["user"]
@@ -850,11 +887,7 @@ if "user" not in st.session_state:
         )
 
     ui_hr()
-    tabs = st.tabs([t("login_tab"), t("register_tab")])
-    with tabs[0]:
-        login_form()
-    with tabs[1]:
-        register_form()
+    login_form()
     st.stop()
 
 user = st.session_state["user"]
@@ -1225,6 +1258,8 @@ with nav_tabs[1]:
     st.header("📋 " + t("device_query_title"))
 
     kw = st.text_input(t("keyword_multi"), key="search_kw")
+    st.caption(t("search_alias_caption"))
+
     search_fields = st.multiselect(
         t("search_fields"),
         ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称", "地区"],
@@ -1247,14 +1282,38 @@ with nav_tabs[1]:
         params = {}
 
         if pj_filter:
-            conds.append("LOWER(项目名称) LIKE :pj")
-            params["pj"] = f"%{pj_filter.lower()}%"
+            pj_tokens = re.findall(r"\S+", pj_filter)
+            pj_expanded = expand_query_tokens(pj_tokens)
+            pj_ors = []
+            for i, token in enumerate(pj_expanded):
+                pname = f"pj_{i}"
+                pj_ors.append(f"LOWER(项目名称) LIKE :{pname}")
+                params[pname] = f"%{token.lower()}%"
+            if pj_ors:
+                conds.append("(" + " OR ".join(pj_ors) + ")")
+
         if sup_filter:
-            conds.append("LOWER(供应商名称) LIKE :sup")
-            params["sup"] = f"%{sup_filter.lower()}%"
+            sup_tokens = re.findall(r"\S+", sup_filter)
+            sup_expanded = expand_query_tokens(sup_tokens)
+            sup_ors = []
+            for i, token in enumerate(sup_expanded):
+                pname = f"sup_{i}"
+                sup_ors.append(f"LOWER(供应商名称) LIKE :{pname}")
+                params[pname] = f"%{token.lower()}%"
+            if sup_ors:
+                conds.append("(" + " OR ".join(sup_ors) + ")")
+
         if brand_filter:
-            conds.append("LOWER(品牌) LIKE :brand")
-            params["brand"] = f"%{brand_filter.lower()}%"
+            brand_tokens = re.findall(r"\S+", brand_filter)
+            brand_expanded = expand_query_tokens(brand_tokens)
+            brand_ors = []
+            for i, token in enumerate(brand_expanded):
+                pname = f"brand_{i}"
+                brand_ors.append(f"LOWER(品牌) LIKE :{pname}")
+                params[pname] = f"%{token.lower()}%"
+            if brand_ors:
+                conds.append("(" + " OR ".join(brand_ors) + ")")
+
         if cur_filter != t("all"):
             conds.append("币种 = :cur")
             params["cur"] = cur_filter
@@ -1268,15 +1327,23 @@ with nav_tabs[1]:
                 params["r"] = region_filter
 
         if kw:
-            tokens = re.findall(r"\S+", kw)
-            fields = search_fields if search_fields else ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称"]
-            for i, token in enumerate(tokens):
-                ors = []
-                for j, f in enumerate(fields):
-                    pname = f"kw_{i}_{j}"
-                    ors.append(f"LOWER({f}) LIKE :{pname}")
-                    params[pname] = f"%{token.lower()}%"
-                conds.append("(" + " OR ".join(ors) + ")")
+            raw_tokens = re.findall(r"\S+", kw)
+            fields = search_fields if search_fields else [
+                "设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称"
+            ]
+
+            for raw_idx, raw_token in enumerate(raw_tokens):
+                token_synonyms = expand_keywords(raw_token)
+                token_ors = []
+
+                for syn_idx, synonym in enumerate(token_synonyms):
+                    for field_idx, field_name in enumerate(fields):
+                        pname = f"kw_{raw_idx}_{syn_idx}_{field_idx}"
+                        token_ors.append(f"LOWER({field_name}) LIKE :{pname}")
+                        params[pname] = f"%{synonym.lower()}%"
+
+                if token_ors:
+                    conds.append("(" + " OR ".join(token_ors) + ")")
 
         sql = "SELECT * FROM quotations"
         if conds:
@@ -1451,6 +1518,36 @@ if user["role"] == "admin":
         st.header(t("admin_user_mgmt"))
         users_df = pd.read_sql(text("SELECT id, username, role, region FROM users ORDER BY id"), engine)
         safe_st_dataframe(users_df, height=420)
+
+        ui_hr()
+        st.subheader(t("admin_create_user_title"))
+        st.caption(t("admin_create_user_sub"))
+
+        with st.form("admin_create_user_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            new_user = c1.text_input(t("admin_create_username"), key="admin_create_username_input")
+            new_pass = c2.text_input(t("admin_create_password"), type="password", key="admin_create_password_input")
+            new_region_create = c3.selectbox(t("admin_create_region"), REGION_OPTIONS, key="admin_create_region_select")
+            confirm_create = st.checkbox(t("admin_create_confirm"), key="admin_create_confirm_check")
+            submit_create = st.form_submit_button(t("admin_create_btn"))
+
+        if submit_create:
+            if not new_user or not new_pass:
+                st.warning(t("empty_user_pass"))
+            elif not confirm_create:
+                st.warning(t("admin_create_confirm_first"))
+            else:
+                try:
+                    pw_hash = hashlib.sha256(new_pass.encode()).hexdigest()
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("INSERT INTO users (username,password,role,region) VALUES (:u,:p,'user',:r)"),
+                            {"u": new_user, "p": pw_hash, "r": new_region_create}
+                        )
+                    st.success(t("admin_create_success").format(new_user, new_region_create))
+                    safe_rerun()
+                except Exception:
+                    st.error(t("admin_create_fail"))
 
         ui_hr()
         st.subheader(t("update_region_title"))

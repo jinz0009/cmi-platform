@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Streamlit App (Postgres / Neon version) — bilingual (CN/EN switchable)
-- Keeps ALL functional modules unchanged (login/upload/import/search/misc/admin).
 - Keeps database schema unchanged (Chinese column names stay the same).
 - User accounts are created by admin only.
 - Adds website language switcher for users (中文 / English).
 - Adds bilingual keyword/alias search (e.g. 海康 / hikvision / hkvision).
+- Removes self-registration completely.
 Run:
     streamlit run app_streamlit.py
 Streamlit Cloud:
@@ -60,26 +60,22 @@ html, body, [data-testid="stAppViewContainer"]{
 [data-testid="stHeader"] { background: transparent !important; }
 [data-testid="stToolbar"] { right: 1rem; }
 
-/* Make main wider and cleaner */
 .block-container{
   padding-top: 1.2rem !important;
   padding-bottom: 2.2rem !important;
 }
 
-/* Sidebar: keep available but subtle */
 [data-testid="stSidebar"]{
   background: rgba(255,255,255,0.03) !important;
   border-right: 1px solid var(--line) !important;
 }
 [data-testid="stSidebar"] * { color: var(--text) !important; }
 
-/* Typography */
 h1,h2,h3 { letter-spacing: 0.2px; }
 h1 { font-size: 2.0rem !important; }
 h2 { font-size: 1.35rem !important; }
 p, label, .stCaption { color: var(--muted) !important; }
 
-/* Buttons */
 .stButton > button, .stDownloadButton > button{
   border-radius: 999px !important;
   border: 1px solid rgba(255,255,255,0.14) !important;
@@ -98,7 +94,6 @@ p, label, .stCaption { color: var(--muted) !important; }
   filter: brightness(0.98);
 }
 
-/* Inputs */
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input,
 [data-testid="stDateInput"] input,
@@ -115,7 +110,6 @@ p, label, .stCaption { color: var(--muted) !important; }
   color: var(--text) !important;
 }
 
-/* Tabs (top nav feel) */
 .stTabs [data-baseweb="tab-list"]{
   gap: 0.35rem !important;
   background: rgba(255,255,255,0.04) !important;
@@ -136,7 +130,6 @@ p, label, .stCaption { color: var(--muted) !important; }
   border: 1px solid rgba(255,255,255,0.16) !important;
 }
 
-/* Dataframe */
 [data-testid="stDataFrame"]{
   border-radius: var(--r) !important;
   overflow: hidden !important;
@@ -147,14 +140,12 @@ p, label, .stCaption { color: var(--muted) !important; }
   color: rgba(255,255,255,0.88) !important;
 }
 
-/* Alerts */
 .stAlert{
   border-radius: var(--r) !important;
   border: 1px solid rgba(255,255,255,0.12) !important;
   background: rgba(255,255,255,0.06) !important;
 }
 
-/* Custom cards */
 .card{
   background: var(--card);
   border: 1px solid rgba(255,255,255,0.10);
@@ -179,7 +170,6 @@ p, label, .stCaption { color: var(--muted) !important; }
   margin: 0.8rem 0 1.0rem 0;
 }
 
-/* Hide default hamburger collapse padding issues a bit */
 [data-testid="collapsedControl"]{
   color: rgba(255,255,255,0.7) !important;
 }
@@ -200,7 +190,6 @@ I18N = {
         "lang_label": "语言",
         "help_title": "使用说明",
         "help_text": "• 普通用户账号由管理员统一创建与分配<br/>• 登录后可批量导入询价记录 / 查询 / 下载结果<br/>• 管理员可创建账号、删除记录、管理用户",
-        "login_tab": "🔑 登录",
         "login_system": "登录系统",
         "login_sub": "使用你的账号进入询价录入与查询平台",
         "username": "用户名",
@@ -331,8 +320,6 @@ I18N = {
         "protected_user_error": "所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。",
         "delete_user_success": "✅ 已删除 {} 个用户账号",
         "db_missing": "缺少数据库连接：请在 Streamlit Secrets 或环境变量中设置 DB_URL。",
-        "user": "用户",
-        "role": "角色",
         "admin_create_user_title": "➕ 新增用户账号",
         "admin_create_user_sub": "普通用户账号由管理员统一创建并分配地区",
         "admin_create_username": "用户名",
@@ -351,7 +338,6 @@ I18N = {
         "lang_label": "Language",
         "help_title": "Instructions",
         "help_text": "• Normal user accounts are created and assigned by admin only<br/>• After login, you can batch import quotation records / search / download results<br/>• Admins can create accounts, delete records, and manage users",
-        "login_tab": "🔑 Login",
         "login_system": "Login",
         "login_sub": "Use your account to access the quotation input and query platform",
         "username": "Username",
@@ -482,8 +468,6 @@ I18N = {
         "protected_user_error": "The selected users contain protected accounts (current logged-in user or default admin). Deletion rejected.",
         "delete_user_success": "✅ Deleted {} user account(s)",
         "db_missing": "Database connection is missing. Please set DB_URL in Streamlit Secrets or environment variables.",
-        "user": "User",
-        "role": "Role",
         "admin_create_user_title": "➕ Create User Account",
         "admin_create_user_sub": "Normal user accounts are created by admin and assigned to a region",
         "admin_create_username": "Username",
@@ -536,7 +520,6 @@ def ui_hr():
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
 
-# ==================== RERUN ====================
 def safe_rerun():
     try:
         st.rerun()
@@ -544,7 +527,7 @@ def safe_rerun():
         pass
 
 
-# ==================== DB: Postgres (Neon) ====================
+# ==================== DB ====================
 DB_URL = None
 try:
     DB_URL = st.secrets.get("DB_URL", None)
@@ -560,7 +543,7 @@ if not DB_URL:
 engine = create_engine(DB_URL, pool_pre_ping=True, poolclass=NullPool)
 
 
-# ==================== INIT DB (IDEMPOTENT) ====================
+# ==================== INIT DB ====================
 with engine.begin() as conn:
     conn.execute(text("""
     CREATE TABLE IF NOT EXISTS users (
@@ -680,9 +663,14 @@ DB_COLUMNS = [
     "询价人", "项目名称", "供应商名称", "询价日期", "录入人", "地区"
 ]
 
+REGION_OPTIONS = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others"]
+REGION_OPTIONS_ADMIN = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
+CURRENCY_OPTIONS = ["IDR", "USD", "RMB", "SGD", "MYR", "THB"]
+
+
 # ==================== SEARCH SYNONYMS ====================
 SYNONYM_GROUPS = [
-    ["海康威视", "海康", "hikvision", "hkvision"],
+    ["海康威视", "海康", "hikvision", "hik vision", "hkvision", "hik-vision"],
     ["华为", "huawei"],
     ["中兴", "zte", "zte corporation"],
     ["新华三", "h3c"],
@@ -703,11 +691,20 @@ SYNONYM_GROUPS = [
     ["谷歌云", "gcp", "google cloud"],
 ]
 
+
+def normalize_search_text(text: str) -> str:
+    if text is None:
+        return ""
+    s = str(text).strip().lower()
+    s = re.sub(r"[\s\-_]+", "", s)
+    return s
+
+
 SYNONYM_MAP = {}
 for group in SYNONYM_GROUPS:
     normalized_group = []
     for item in group:
-        s = str(item).strip().lower()
+        s = normalize_search_text(item)
         if s:
             normalized_group.append(s)
     normalized_group = list(dict.fromkeys(normalized_group))
@@ -718,8 +715,7 @@ for group in SYNONYM_GROUPS:
 def expand_keywords(token: str):
     if token is None:
         return []
-    t0 = str(token).strip()
-    t = t0.lower()
+    t = normalize_search_text(token)
     if not t:
         return []
     if t in SYNONYM_MAP:
@@ -727,15 +723,42 @@ def expand_keywords(token: str):
     return [t]
 
 
-def expand_query_tokens(tokens):
-    expanded = []
-    seen = set()
-    for token in tokens:
-        for item in expand_keywords(token):
-            if item not in seen:
-                seen.add(item)
-                expanded.append(item)
-    return expanded
+def split_query_tokens(text_value: str):
+    if not text_value:
+        return []
+    return re.findall(r"\S+", str(text_value).strip())
+
+
+def sql_normalize_expr(field_name: str) -> str:
+    return f"REPLACE(REPLACE(REPLACE(LOWER(COALESCE({field_name}, '')), ' ', ''), '-', ''), '_', '')"
+
+
+def build_search_blob_expr(fields):
+    concat_sql = " || ' ' || ".join([f"COALESCE({f}, '')" for f in fields])
+    return f"REPLACE(REPLACE(REPLACE(LOWER(({concat_sql})), ' ', ''), '-', ''), '_', '')"
+
+
+def build_normalized_contains_conditions(field_sql: str, raw_text: str, prefix: str, params: dict):
+    tokens = split_query_tokens(raw_text)
+    if not tokens:
+        return None
+
+    all_token_ands = []
+
+    for i, token in enumerate(tokens):
+        synonyms = expand_keywords(token)
+        token_ors = []
+        for j, syn in enumerate(synonyms):
+            pname = f"{prefix}_{i}_{j}"
+            token_ors.append(f"{field_sql} LIKE :{pname}")
+            params[pname] = f"%{syn}%"
+        if token_ors:
+            all_token_ands.append("(" + " OR ".join(token_ors) + ")")
+
+    if not all_token_ands:
+        return None
+
+    return "(" + " AND ".join(all_token_ands) + ")"
 
 
 def auto_map_header(orig_header: str):
@@ -827,11 +850,6 @@ def normalize_cell(x):
 
 
 # ==================== AUTH ====================
-REGION_OPTIONS = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others"]
-REGION_OPTIONS_ADMIN = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
-CURRENCY_OPTIONS = ["IDR", "USD", "RMB", "SGD", "MYR", "THB"]
-
-
 def login_form():
     ui_card(t("login_system"), t("login_sub"))
     ui_hr()
@@ -847,12 +865,12 @@ def login_form():
             return
         pw_hash = hashlib.sha256(p.encode()).hexdigest()
         with engine.begin() as conn:
-            user = conn.execute(
+            user_row = conn.execute(
                 text("SELECT username, role, region FROM users WHERE username=:u AND password=:p"),
                 {"u": u, "p": pw_hash}
             ).fetchone()
-        if user:
-            st.session_state["user"] = {"username": user.username, "role": user.role, "region": user.region}
+        if user_row:
+            st.session_state["user"] = {"username": user_row.username, "role": user_row.role, "region": user_row.region}
             safe_rerun()
         else:
             st.error(t("wrong_user_pass"))
@@ -891,6 +909,7 @@ if "user" not in st.session_state:
     st.stop()
 
 user = st.session_state["user"]
+
 
 # ==================== TOP BAR ====================
 top_l, top_m, top_blank = st.columns([1.4, 2.3, 1.1])
@@ -1146,14 +1165,12 @@ with nav_tabs[0]:
                     df_valid = df_final[~rows_invalid_mask].copy()
                     df_invalid = df_final[rows_invalid_mask].copy()
 
-                    imported_count = 0
                     if not df_valid.empty:
                         try:
                             df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
                             with engine.begin() as conn:
                                 df_to_store.to_sql("quotations", conn, if_exists="append", index=False, method="multi")
-                            imported_count = len(df_to_store)
-                            st.success(t("imported_valid").format(imported_count))
+                            st.success(t("imported_valid").format(len(df_to_store)))
                         except Exception as e:
                             st.error(t("import_valid_fail").format(e))
                     else:
@@ -1281,43 +1298,6 @@ with nav_tabs[1]:
         conds = []
         params = {}
 
-        if pj_filter:
-            pj_tokens = re.findall(r"\S+", pj_filter)
-            pj_expanded = expand_query_tokens(pj_tokens)
-            pj_ors = []
-            for i, token in enumerate(pj_expanded):
-                pname = f"pj_{i}"
-                pj_ors.append(f"LOWER(项目名称) LIKE :{pname}")
-                params[pname] = f"%{token.lower()}%"
-            if pj_ors:
-                conds.append("(" + " OR ".join(pj_ors) + ")")
-
-        if sup_filter:
-            sup_tokens = re.findall(r"\S+", sup_filter)
-            sup_expanded = expand_query_tokens(sup_tokens)
-            sup_ors = []
-            for i, token in enumerate(sup_expanded):
-                pname = f"sup_{i}"
-                sup_ors.append(f"LOWER(供应商名称) LIKE :{pname}")
-                params[pname] = f"%{token.lower()}%"
-            if sup_ors:
-                conds.append("(" + " OR ".join(sup_ors) + ")")
-
-        if brand_filter:
-            brand_tokens = re.findall(r"\S+", brand_filter)
-            brand_expanded = expand_query_tokens(brand_tokens)
-            brand_ors = []
-            for i, token in enumerate(brand_expanded):
-                pname = f"brand_{i}"
-                brand_ors.append(f"LOWER(品牌) LIKE :{pname}")
-                params[pname] = f"%{token.lower()}%"
-            if brand_ors:
-                conds.append("(" + " OR ".join(brand_ors) + ")")
-
-        if cur_filter != t("all"):
-            conds.append("币种 = :cur")
-            params["cur"] = cur_filter
-
         if user["role"] != "admin":
             conds.append("地区 = :r")
             params["r"] = user["region"]
@@ -1326,24 +1306,36 @@ with nav_tabs[1]:
                 conds.append("地区 = :r")
                 params["r"] = region_filter
 
+        if pj_filter:
+            project_expr = sql_normalize_expr("项目名称")
+            pj_cond = build_normalized_contains_conditions(project_expr, pj_filter, "pj", params)
+            if pj_cond:
+                conds.append(pj_cond)
+
+        if sup_filter:
+            supplier_expr = sql_normalize_expr("供应商名称")
+            sup_cond = build_normalized_contains_conditions(supplier_expr, sup_filter, "sup", params)
+            if sup_cond:
+                conds.append(sup_cond)
+
+        if brand_filter:
+            brand_expr = sql_normalize_expr("品牌")
+            brand_cond = build_normalized_contains_conditions(brand_expr, brand_filter, "brand", params)
+            if brand_cond:
+                conds.append(brand_cond)
+
+        if cur_filter != t("all"):
+            conds.append("币种 = :cur")
+            params["cur"] = cur_filter
+
         if kw:
-            raw_tokens = re.findall(r"\S+", kw)
             fields = search_fields if search_fields else [
                 "设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称"
             ]
-
-            for raw_idx, raw_token in enumerate(raw_tokens):
-                token_synonyms = expand_keywords(raw_token)
-                token_ors = []
-
-                for syn_idx, synonym in enumerate(token_synonyms):
-                    for field_idx, field_name in enumerate(fields):
-                        pname = f"kw_{raw_idx}_{syn_idx}_{field_idx}"
-                        token_ors.append(f"LOWER({field_name}) LIKE :{pname}")
-                        params[pname] = f"%{synonym.lower()}%"
-
-                if token_ors:
-                    conds.append("(" + " OR ".join(token_ors) + ")")
+            search_blob_expr = build_search_blob_expr(fields)
+            kw_cond = build_normalized_contains_conditions(search_blob_expr, kw, "kw", params)
+            if kw_cond:
+                conds.append(kw_cond)
 
         sql = "SELECT * FROM quotations"
         if conds:

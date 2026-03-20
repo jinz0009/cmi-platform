@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Streamlit App (Postgres / Neon version) — UI refresh (Wix-like tech style)
+Streamlit App (Postgres / Neon version) — bilingual (CN/EN switchable)
 - Keeps ALL functional modules unchanged (login/register/upload/import/search/misc/admin).
-- Only changes UI layout + CSS: top nav, dark tech theme, cards, nicer tables & buttons.
+- Keeps database schema unchanged (Chinese column names stay the same).
+- Adds website language switcher for users (中文 / English).
 Run:
     streamlit run app_streamlit.py
 Streamlit Cloud:
@@ -23,7 +24,7 @@ from sqlalchemy.pool import NullPool
 
 
 # ==================== PAGE CONFIG ====================
-st.set_page_config(page_title="CMI 询价录入与查询平台", layout="wide")
+st.set_page_config(page_title="CMI Quotation Input & Query Platform", layout="wide")
 
 
 # ==================== THEME (Wix-like Tech Dark) ====================
@@ -184,6 +185,335 @@ p, label, .stCaption { color: var(--muted) !important; }
 st.markdown(f"<style>{THEME_CSS}</style>", unsafe_allow_html=True)
 
 
+# ==================== I18N ====================
+LANG_OPTIONS = {
+    "中文": "zh",
+    "English": "en"
+}
+
+I18N = {
+    "zh": {
+        "app_title": "CMI 询价录入与查询平台",
+        "app_subtitle": "High Tech • Effective Solution • Quick Use",
+        "lang_label": "语言",
+        "help_title": "使用说明",
+        "help_text": "• 自行注册普通账号，如需管理员账号请联系APAC<br/>• 登录后可批量导入 询价记录 / 查询 / 下载结果<br/>• 管理员可删除记录、管理用户",
+        "login_tab": "🔑 登录",
+        "register_tab": "🧾 注册",
+        "login_system": "登录系统",
+        "login_sub": "使用你的账号进入询价录入与查询平台",
+        "username": "用户名",
+        "password": "密码",
+        "login_btn": "登录",
+        "enter_user_pass": "请输入用户名和密码",
+        "wrong_user_pass": "用户名或密码错误",
+        "register_account": "注册账号",
+        "register_sub": "创建一个普通用户账号；管理员账号由系统预置",
+        "new_username": "新用户名",
+        "new_password": "新密码",
+        "region": "地区",
+        "register_btn": "注册",
+        "empty_user_pass": "用户名和密码不能为空",
+        "register_success": "注册成功，请登录",
+        "register_fail": "用户名已存在或数据库异常",
+        "current_user": "当前用户",
+        "logout": "退出登录",
+        "page_input": "🏠 录入页面",
+        "page_device_query": "📋 设备查询",
+        "page_misc_query": "💰 杂费查询",
+        "page_admin": "👑 管理员后台",
+        "input_center": "录入中心",
+        "input_center_sub": "支持 Excel 批量录入 + 手工录入（设备 / 杂费）",
+        "excel_bulk": "📂 Excel 批量录入",
+        "excel_caption": "系统会尝试识别上传文件的表头并给出建议映射。",
+        "download_template": "下载模板",
+        "upload_excel": "上传 Excel (.xlsx)",
+        "preview_fail": "读取预览失败：{}",
+        "raw_headers_detected": "检测到的原始表头（用于映射，系统已尝试自动对应一版建议）：",
+        "mapping_suggested": "系统已为每一列生成建议映射（你可以直接应用，或修改后提交）。",
+        "source_col": "源列: {}",
+        "ignore": "Ignore",
+        "apply_mapping_preview": "应用映射并预览",
+        "mapping_saved": "映射已保存。现在请填写全局必填信息并导入。",
+        "mapping_restore_fail": "恢复映射数据失败：{}",
+        "mapped_preview": "映射后预览（前 10 行）：",
+        "mapping_unavailable": "映射数据无法预览，请重新映射。",
+        "open_global_form": "➡️ 填写/查看全局信息并应用导入",
+        "global_hint": "若需要对空值统一填充（币种/项目/供应商/询价人），请展开并填写全局信息。",
+        "global_info": "#### 全局信息（仅填充空值）",
+        "project_name": "项目名称",
+        "supplier_name": "供应商名称",
+        "enquirer": "询价人",
+        "inq_date": "询价日期",
+        "currency_fill": "币种（用于填充空值）",
+        "apply_global_check": "应用全局并继续校验",
+        "global_required": "必须填写：项目名称、供应商名称、询价人和询价日期",
+        "global_currency_required": "由于源数据存在空的币种，请选择币种以继续。",
+        "global_applied": "已应用全局信息，正在进行总体必填校验...",
+        "mapping_lost": "映射数据丢失，无法继续导入。",
+        "imported_valid": "✅ 已导入 {} 条有效记录。",
+        "import_valid_fail": "导入有效记录时发生错误：{}",
+        "no_valid_records": "没有找到满足总体必填条件的记录可导入。",
+        "invalid_rows_warn": "以下 {} 条记录缺少总体必填字段，未被导入，请修正后重新导入：",
+        "download_invalid": "📥 下载未通过记录（用于修正）",
+        "manual_device": "✏️ 手工录入设备",
+        "material_name": "设备材料名称",
+        "brand_optional": "品牌（可选）",
+        "qty_confirm": "数量确认",
+        "device_unit_price": "设备单价",
+        "labor_unit_price": "人工包干单价",
+        "currency": "币种",
+        "description": "描述",
+        "manual_add_btn": "添加记录（手动）",
+        "manual_required": "必填项不能为空：项目名称、供应商名称、询价人、设备材料名称",
+        "manual_price_required": "请至少填写 设备单价 或 人工包干单价（两者至少填一项，且大于0）。",
+        "manual_add_success": "✅ 手工记录已添加",
+        "manual_add_fail": "添加记录失败：{}",
+        "manual_misc": "💰 手工录入杂费",
+        "misc_category": "杂费类目（例如运输/安装/税费）",
+        "amount": "金额",
+        "remark_optional": "备注（可选）",
+        "occ_date": "发生日期",
+        "add_misc_btn": "添加杂费记录",
+        "misc_required": "请填写项目名称、杂费类目和金额",
+        "misc_add_success": "✅ 杂费记录已添加",
+        "misc_add_fail": "添加杂费记录失败：{}",
+        "device_query_title": "设备查询",
+        "device_query_sub": "按关键词 / 项目 / 供应商 / 品牌 / 地区筛选，并支持导出 Excel",
+        "keyword_multi": "关键词（多个空格分词）",
+        "search_fields": "搜索字段（留空为默认）",
+        "filter_project": "按项目名称过滤",
+        "filter_supplier": "按供应商名称过滤",
+        "filter_brand": "按品牌过滤",
+        "all": "全部",
+        "filter_region_admin": "按地区过滤（管理员）",
+        "only_region_data": "仅显示您所在地区的数据：{}",
+        "search_device_btn": "🔍 搜索设备",
+        "query_fail": "查询失败：{}",
+        "no_records": "未找到符合条件的记录。",
+        "download_result": "下载结果",
+        "price_stats": "### 当前查询 — 价格统计概览（基于返回记录）",
+        "device_avg": "设备单价 — 均价",
+        "device_min": "设备单价 — 最低价",
+        "labor_avg": "人工包干单价 — 均价",
+        "labor_min": "人工包干单价 — 最低价",
+        "device_min_rows": "#### 设备单价 — 历史最低价对应记录（可能多条并列）",
+        "labor_min_rows": "#### 人工包干单价 — 历史最低价对应记录（可能多条并列）",
+        "group_by_name": "#### 按设备名称分组 — 均价 / 最低价",
+        "stats_fail": "计算价格统计时发生异常：{}",
+        "admin_delete_title": "### ⚠️ 管理员删除（按 id 删除）",
+        "admin_select_delete": "选中要删除的记录",
+        "admin_confirm_delete": "我确认删除所选记录（不可恢复）",
+        "admin_delete_btn": "删除所选记录（管理员）",
+        "select_delete_first": "请先选择要删除的记录。",
+        "confirm_delete_first": "请勾选确认框以执行删除。",
+        "parse_id_fail": "解析所选 id 失败：{}",
+        "invalid_id_cancel": "无有效 id，取消删除。",
+        "delete_archive_success": "✅ 已删除并归档所选记录。",
+        "delete_archive_fail": "删除/归档失败：{}",
+        "only_admin_delete": "仅管理员可删除记录。",
+        "misc_query_title": "杂费查询",
+        "misc_query_sub": "按项目名称检索杂费记录，支持导出 Excel",
+        "search_misc_btn": "🔍 搜索杂费",
+        "download_misc": "下载杂费结果",
+        "admin_panel": "管理员后台",
+        "admin_panel_sub": "用户管理：查看 / 修改地区 / 删除账号（保护当前用户与默认 admin）",
+        "admin_user_mgmt": "👑 管理员后台 — 用户管理",
+        "update_region_title": "🛠️ 修改用户地区（Region）",
+        "select_user_update": "选择要修改的用户",
+        "new_region": "新地区",
+        "confirm_update_region": "我确认要修改该用户地区",
+        "update_region_btn": "更新地区",
+        "user_not_found": "未找到该用户，请刷新页面。",
+        "default_admin_warn": "系统默认 admin 不建议修改地区。",
+        "confirm_update_first": "请勾选确认框后再更新。",
+        "update_region_success": "✅ 已更新用户 {} 的地区为：{}",
+        "update_fail": "更新失败：{}",
+        "delete_user_title": "🗑️ 删除用户账号",
+        "delete_user_caption": "说明：删除账号不会自动删除该用户已录入的报价/杂费数据（数据仍保留在 quotations / misc_costs 表中）。",
+        "no_deletable_user": "当前没有可删除的用户（已保护当前登录用户与默认 admin）。",
+        "select_delete_user": "选择要删除的用户（可多选）",
+        "confirm_delete_user": "我确认删除所选用户（不可恢复）",
+        "delete_user_btn": "删除用户",
+        "protected_user_error": "所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。",
+        "delete_user_success": "✅ 已删除 {} 个用户账号",
+        "db_missing": "缺少数据库连接：请在 Streamlit Secrets 或环境变量中设置 DB_URL。",
+        "user": "用户",
+        "role": "角色",
+    },
+    "en": {
+        "app_title": "CMI Quotation Input & Query Platform",
+        "app_subtitle": "High Tech • Effective Solution • Quick Use",
+        "lang_label": "Language",
+        "help_title": "Instructions",
+        "help_text": "• You may register a normal user account by yourself; for an admin account, please contact APAC<br/>• After login, you can batch import quotation records / search / download results<br/>• Admins can delete records and manage users",
+        "login_tab": "🔑 Login",
+        "register_tab": "🧾 Register",
+        "login_system": "Login",
+        "login_sub": "Use your account to access the quotation input and query platform",
+        "username": "Username",
+        "password": "Password",
+        "login_btn": "Login",
+        "enter_user_pass": "Please enter username and password",
+        "wrong_user_pass": "Incorrect username or password",
+        "register_account": "Register Account",
+        "register_sub": "Create a normal user account; admin account is preconfigured by the system",
+        "new_username": "New Username",
+        "new_password": "New Password",
+        "region": "Region",
+        "register_btn": "Register",
+        "empty_user_pass": "Username and password cannot be empty",
+        "register_success": "Registration successful. Please log in.",
+        "register_fail": "Username already exists or database error",
+        "current_user": "Current User",
+        "logout": "Logout",
+        "page_input": "🏠 Input",
+        "page_device_query": "📋 Device Query",
+        "page_misc_query": "💰 Misc Query",
+        "page_admin": "👑 Admin Panel",
+        "input_center": "Input Center",
+        "input_center_sub": "Supports Excel batch import + manual input (devices / miscellaneous costs)",
+        "excel_bulk": "📂 Excel Batch Import",
+        "excel_caption": "The system will try to detect the headers in the uploaded file and suggest mappings.",
+        "download_template": "Download Template",
+        "upload_excel": "Upload Excel (.xlsx)",
+        "preview_fail": "Failed to read preview: {}",
+        "raw_headers_detected": "Detected raw headers (for mapping; the system has already suggested a first-round mapping):",
+        "mapping_suggested": "Suggested mappings have been generated for each column. You may apply them directly or adjust them before submitting.",
+        "source_col": "Source Column: {}",
+        "ignore": "Ignore",
+        "apply_mapping_preview": "Apply Mapping and Preview",
+        "mapping_saved": "Mapping has been saved. Please fill in the required global information and then import.",
+        "mapping_restore_fail": "Failed to restore mapped data: {}",
+        "mapped_preview": "Mapped Preview (first 10 rows):",
+        "mapping_unavailable": "Mapped data cannot be previewed. Please remap it.",
+        "open_global_form": "➡️ Fill / View Global Information and Import",
+        "global_hint": "If you need to fill blank values in batch (currency/project/supplier/enquirer), please expand and complete the global information.",
+        "global_info": "#### Global Information (fill blank values only)",
+        "project_name": "Project Name",
+        "supplier_name": "Supplier Name",
+        "enquirer": "Enquirer",
+        "inq_date": "Enquiry Date",
+        "currency_fill": "Currency (used to fill blank values)",
+        "apply_global_check": "Apply Global Info and Continue Validation",
+        "global_required": "Required: Project Name, Supplier Name, Enquirer, and Enquiry Date",
+        "global_currency_required": "Some source rows have empty currency values. Please select a currency to continue.",
+        "global_applied": "Global information applied. Running overall required-field validation...",
+        "mapping_lost": "Mapped data is missing and cannot continue import.",
+        "imported_valid": "✅ Imported {} valid records.",
+        "import_valid_fail": "Error while importing valid records: {}",
+        "no_valid_records": "No records meeting the overall required conditions were found for import.",
+        "invalid_rows_warn": "The following {} rows are missing required fields and were not imported. Please correct them and re-import:",
+        "download_invalid": "📥 Download Invalid Rows (for correction)",
+        "manual_device": "✏️ Manual Device Input",
+        "material_name": "Device / Material Name",
+        "brand_optional": "Brand (optional)",
+        "qty_confirm": "Confirmed Quantity",
+        "device_unit_price": "Device Unit Price",
+        "labor_unit_price": "Labor Lump-Sum Unit Price",
+        "currency": "Currency",
+        "description": "Description",
+        "manual_add_btn": "Add Record (Manual)",
+        "manual_required": "Required fields cannot be empty: Project Name, Supplier Name, Enquirer, Device / Material Name",
+        "manual_price_required": "Please enter at least one of Device Unit Price or Labor Lump-Sum Unit Price, and it must be greater than 0.",
+        "manual_add_success": "✅ Manual record added",
+        "manual_add_fail": "Failed to add record: {}",
+        "manual_misc": "💰 Manual Miscellaneous Cost Input",
+        "misc_category": "Miscellaneous Cost Category (e.g. transport / installation / tax)",
+        "amount": "Amount",
+        "remark_optional": "Remark (optional)",
+        "occ_date": "Occurrence Date",
+        "add_misc_btn": "Add Misc Cost Record",
+        "misc_required": "Please fill in Project Name, Miscellaneous Cost Category, and Amount",
+        "misc_add_success": "✅ Miscellaneous cost record added",
+        "misc_add_fail": "Failed to add miscellaneous cost record: {}",
+        "device_query_title": "Device Query",
+        "device_query_sub": "Filter by keyword / project / supplier / brand / region, with Excel export support",
+        "keyword_multi": "Keyword(s) (split by spaces)",
+        "search_fields": "Search Fields (leave blank for default)",
+        "filter_project": "Filter by Project Name",
+        "filter_supplier": "Filter by Supplier Name",
+        "filter_brand": "Filter by Brand",
+        "all": "All",
+        "filter_region_admin": "Filter by Region (Admin)",
+        "only_region_data": "Only data from your region is shown: {}",
+        "search_device_btn": "🔍 Search Devices",
+        "query_fail": "Query failed: {}",
+        "no_records": "No matching records found.",
+        "download_result": "Download Results",
+        "price_stats": "### Current Query — Price Statistics Overview (based on returned records)",
+        "device_avg": "Device Unit Price — Average",
+        "device_min": "Device Unit Price — Minimum",
+        "labor_avg": "Labor Lump-Sum Unit Price — Average",
+        "labor_min": "Labor Lump-Sum Unit Price — Minimum",
+        "device_min_rows": "#### Device Unit Price — Records corresponding to the historical minimum price (ties possible)",
+        "labor_min_rows": "#### Labor Lump-Sum Unit Price — Records corresponding to the historical minimum price (ties possible)",
+        "group_by_name": "#### Grouped by Device Name — Average / Minimum",
+        "stats_fail": "Exception occurred while calculating price statistics: {}",
+        "admin_delete_title": "### ⚠️ Admin Delete (delete by id)",
+        "admin_select_delete": "Select records to delete",
+        "admin_confirm_delete": "I confirm deletion of the selected records (cannot be undone)",
+        "admin_delete_btn": "Delete Selected Records (Admin)",
+        "select_delete_first": "Please select records to delete first.",
+        "confirm_delete_first": "Please tick the confirmation checkbox before deleting.",
+        "parse_id_fail": "Failed to parse selected id(s): {}",
+        "invalid_id_cancel": "No valid id found. Deletion cancelled.",
+        "delete_archive_success": "✅ Selected records have been deleted and archived.",
+        "delete_archive_fail": "Delete / archive failed: {}",
+        "only_admin_delete": "Only admins can delete records.",
+        "misc_query_title": "Miscellaneous Cost Query",
+        "misc_query_sub": "Search miscellaneous cost records by project name, with Excel export support",
+        "search_misc_btn": "🔍 Search Misc Costs",
+        "download_misc": "Download Misc Results",
+        "admin_panel": "Admin Panel",
+        "admin_panel_sub": "User management: view / update region / delete accounts (protect current user and default admin)",
+        "admin_user_mgmt": "👑 Admin Panel — User Management",
+        "update_region_title": "🛠️ Update User Region",
+        "select_user_update": "Select user to update",
+        "new_region": "New Region",
+        "confirm_update_region": "I confirm updating this user's region",
+        "update_region_btn": "Update Region",
+        "user_not_found": "User not found. Please refresh the page.",
+        "default_admin_warn": "It is not recommended to modify the region of the default admin.",
+        "confirm_update_first": "Please tick the confirmation checkbox before updating.",
+        "update_region_success": "✅ Updated user {} region to: {}",
+        "update_fail": "Update failed: {}",
+        "delete_user_title": "🗑️ Delete User Account",
+        "delete_user_caption": "Note: deleting an account will not automatically delete the quotation / miscellaneous cost data entered by that user. The data remains in the quotations / misc_costs tables.",
+        "no_deletable_user": "There are currently no deletable users (current logged-in user and default admin are protected).",
+        "select_delete_user": "Select user(s) to delete (multiple selection allowed)",
+        "confirm_delete_user": "I confirm deleting the selected user(s) (cannot be undone)",
+        "delete_user_btn": "Delete User(s)",
+        "protected_user_error": "The selected users contain protected accounts (current logged-in user or default admin). Deletion rejected.",
+        "delete_user_success": "✅ Deleted {} user account(s)",
+        "db_missing": "Database connection is missing. Please set DB_URL in Streamlit Secrets or environment variables.",
+        "user": "User",
+        "role": "Role",
+    }
+}
+
+
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "en"
+
+
+def t(key: str) -> str:
+    lang = st.session_state.get("lang", "en")
+    return I18N.get(lang, I18N["en"]).get(key, key)
+
+
+def set_language_widget(key_name: str):
+    reverse_map = {v: k for k, v in LANG_OPTIONS.items()}
+    current_display = reverse_map.get(st.session_state.get("lang", "en"), "English")
+    selected = st.selectbox(
+        t("lang_label"),
+        options=list(LANG_OPTIONS.keys()),
+        index=list(LANG_OPTIONS.keys()).index(current_display),
+        key=key_name
+    )
+    st.session_state["lang"] = LANG_OPTIONS[selected]
+
+
 def ui_card(title: str, subtitle: str = ""):
     st.markdown(
         f"""
@@ -218,7 +548,7 @@ if not DB_URL:
     DB_URL = os.getenv("DB_URL")
 
 if not DB_URL:
-    st.error("缺少数据库连接：请在 Streamlit Secrets 或环境变量中设置 DB_URL。")
+    st.error(t("db_missing"))
     st.stop()
 
 engine = create_engine(DB_URL, pool_pre_ping=True, poolclass=NullPool)
@@ -434,18 +764,23 @@ def normalize_cell(x):
 
 
 # ==================== AUTH ====================
+REGION_OPTIONS = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others"]
+REGION_OPTIONS_ADMIN = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
+CURRENCY_OPTIONS = ["IDR", "USD", "RMB", "SGD", "MYR", "THB"]
+
+
 def login_form():
-    ui_card("登录系统", "使用你的账号进入询价录入与查询平台")
+    ui_card(t("login_system"), t("login_sub"))
     ui_hr()
 
     with st.form("login_form"):
-        u = st.text_input("用户名")
-        p = st.text_input("密码", type="password")
-        submitted = st.form_submit_button("登录")
+        u = st.text_input(t("username"))
+        p = st.text_input(t("password"), type="password")
+        submitted = st.form_submit_button(t("login_btn"))
 
     if submitted:
         if not u or not p:
-            st.error("请输入用户名和密码")
+            st.error(t("enter_user_pass"))
             return
         pw_hash = hashlib.sha256(p.encode()).hexdigest()
         with engine.begin() as conn:
@@ -457,22 +792,22 @@ def login_form():
             st.session_state["user"] = {"username": user.username, "role": user.role, "region": user.region}
             safe_rerun()
         else:
-            st.error("用户名或密码错误")
+            st.error(t("wrong_user_pass"))
 
 
 def register_form():
-    ui_card("注册账号", "创建一个普通用户账号；管理员账号由系统预置")
+    ui_card(t("register_account"), t("register_sub"))
     ui_hr()
 
     with st.form("register_form", clear_on_submit=False):
-        ru = st.text_input("新用户名", key="reg_user")
-        rp = st.text_input("新密码", type="password", key="reg_pass")
-        region = st.selectbox("地区", ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others"])
-        submitted = st.form_submit_button("注册")
+        ru = st.text_input(t("new_username"), key="reg_user")
+        rp = st.text_input(t("new_password"), type="password", key="reg_pass")
+        region = st.selectbox(t("region"), REGION_OPTIONS)
+        submitted = st.form_submit_button(t("register_btn"))
 
     if submitted:
         if not ru or not rp:
-            st.warning("用户名和密码不能为空")
+            st.warning(t("empty_user_pass"))
             return
         pw_hash = hashlib.sha256(rp.encode()).hexdigest()
         try:
@@ -481,9 +816,9 @@ def register_form():
                     text("INSERT INTO users (username,password,role,region) VALUES (:u,:p,'user',:r)"),
                     {"u": ru, "p": pw_hash, "r": region}
                 )
-            st.success("注册成功，请登录")
+            st.success(t("register_success"))
         except Exception:
-            st.error("用户名已存在或数据库异常")
+            st.error(t("register_fail"))
 
 
 def logout():
@@ -494,19 +829,20 @@ def logout():
 
 # ==================== PAGE FLOW ====================
 if "user" not in st.session_state:
-    # Top hero
+    top_lang_l, top_lang_r = st.columns([6, 1.4])
+    with top_lang_r:
+        set_language_widget("lang_selector_guest_top")
+
     left, right = st.columns([1.35, 1])
     with left:
-        st.markdown("## ✨ CMI 询价录入与查询平台")
+        st.markdown(f"## ✨ {t('app_title')}")
     with right:
         st.markdown(
-            """
+            f"""
             <div class="card">
-              <div class="title">使用说明</div>
+              <div class="title">{t("help_title")}</div>
               <div class="sub">
-                • 自行注册普通账号，如需管理员账号请联系APAC<br/>
-                • 登录后可批量导入 询价记录 / 查询 / 下载结果<br/>
-                • 管理员可删除记录、管理用户
+                {t("help_text")}
               </div>
             </div>
             """,
@@ -514,7 +850,7 @@ if "user" not in st.session_state:
         )
 
     ui_hr()
-    tabs = st.tabs(["🔑 登录", "🧾 注册"])
+    tabs = st.tabs([t("login_tab"), t("register_tab")])
     with tabs[0]:
         login_form()
     with tabs[1]:
@@ -523,27 +859,26 @@ if "user" not in st.session_state:
 
 user = st.session_state["user"]
 
-# ==================== TOP BAR (Merged right panel) ====================
-# 左侧留空，中间导航，右侧统一信息栏（标题+当前用户）
+# ==================== TOP BAR ====================
 top_l, top_m, top_blank = st.columns([1.4, 2.3, 1.1])
 
 with top_blank:
-    st.write("")  # 占位：不显示任何内容
+    set_language_widget("lang_selector_user_top")
 
 with top_m:
-    pages = ["🏠 录入页面", "📋 设备查询", "💰 杂费查询"]
+    pages = [t("page_input"), t("page_device_query"), t("page_misc_query")]
     if user["role"] == "admin":
-        pages.append("👑 管理员后台")
+        pages.append(t("page_admin"))
     nav_tabs = st.tabs(pages)
 
 with top_l:
     st.markdown(
         f"""
         <div class="card">
-          <div class="title">CMI 询价录入与查询平台</div>
-          <div class="sub">High Tech • Effective Solution • Quick Use</div>
+          <div class="title">{t("app_title")}</div>
+          <div class="sub">{t("app_subtitle")}</div>
           <div class="hr" style="margin:0.75rem 0 0.8rem 0;"></div>
-          <div class="title" style="font-size:0.98rem;">当前用户</div>
+          <div class="title" style="font-size:0.98rem;">{t("current_user")}</div>
           <div class="sub">
             👤 {user["username"]}<br/>
             🏢 {user["region"]}<br/>
@@ -553,32 +888,28 @@ with top_l:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("退出登录", key="logout_btn_top"):
+    if st.button(t("logout"), key="logout_btn_top"):
         logout()
 
 ui_hr()
 
 
-# Helper to map active tab -> page name
-# Streamlit doesn't give "active tab index" directly; we render each tab's content in place.
-# We'll simply put each page's original logic into each tab block.
-
 # ==================== PAGE: HOME / INPUT ====================
 with nav_tabs[0]:
-    ui_card("录入中心", "支持 Excel 批量录入 + 手工录入（设备 / 杂费）")
+    ui_card(t("input_center"), t("input_center_sub"))
     ui_hr()
 
-    st.header("📂 Excel 批量录入")
-    st.caption("系统会尝试识别上传文件的表头并给出建议映射。")
+    st.header(t("excel_bulk"))
+    st.caption(t("excel_caption"))
 
     template = pd.DataFrame(columns=[c for c in DB_COLUMNS if c not in ("录入人", "地区")])
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         template.to_excel(writer, index=False)
     buf.seek(0)
-    st.download_button("下载模板", buf, "quotation_template.xlsx", key="download_template")
+    st.download_button(t("download_template"), buf, "quotation_template.xlsx", key="download_template")
 
-    uploaded = st.file_uploader("上传 Excel (.xlsx)", type=["xlsx"], key="upload_excel")
+    uploaded = st.file_uploader(t("upload_excel"), type=["xlsx"], key="upload_excel")
 
     if uploaded:
         if "mapping_done" not in st.session_state:
@@ -590,7 +921,7 @@ with nav_tabs[0]:
             preview = pd.read_excel(uploaded, header=None, nrows=50, dtype=object)
             safe_st_dataframe(preview.head(10), height=320)
         except Exception as e:
-            st.error(f"读取预览失败：{e}")
+            st.error(t("preview_fail").format(e))
             preview = None
 
         if preview is not None:
@@ -610,34 +941,35 @@ with nav_tabs[0]:
 
             data_df.columns = header_names
 
-            st.markdown("**检测到的原始表头（用于映射，系统已尝试自动对应一版建议）：**")
+            st.markdown(f"**{t('raw_headers_detected')}**")
             st.write(list(data_df.columns))
 
-            mapping_targets = ["Ignore"] + [c for c in DB_COLUMNS if c not in ("录入人", "地区")]
+            mapping_targets = [t("ignore")] + [c for c in DB_COLUMNS if c not in ("录入人", "地区")]
 
             auto_defaults = {}
             for col in data_df.columns:
                 auto_val = auto_map_header(col)
-                auto_defaults[col] = auto_val if (auto_val and auto_val in mapping_targets) else "Ignore"
+                auto_defaults[col] = auto_val if (auto_val and auto_val in mapping_targets) else t("ignore")
 
-            st.markdown("系统已为每一列生成建议映射（你可以直接应用，或修改后提交）。")
+            st.markdown(t("mapping_suggested"))
 
             mapped_choices = {}
             with st.form("mapping_form", clear_on_submit=False):
                 cols_left, cols_right = st.columns(2)
                 for i, col in enumerate(data_df.columns):
-                    default = auto_defaults.get(col, "Ignore")
+                    default = auto_defaults.get(col, t("ignore"))
                     container = cols_left if i % 2 == 0 else cols_right
                     sel = container.selectbox(
-                        f"源列: {col}", mapping_targets,
+                        t("source_col").format(col),
+                        mapping_targets,
                         index=mapping_targets.index(default) if default in mapping_targets else 0,
                         key=f"map_{i}"
                     )
                     mapped_choices[col] = sel
-                submitted = st.form_submit_button("应用映射并预览")
+                submitted = st.form_submit_button(t("apply_mapping_preview"))
 
             if submitted:
-                rename_dict = {orig: mapped for orig, mapped in mapped_choices.items() if mapped != "Ignore"}
+                rename_dict = {orig: mapped for orig, mapped in mapped_choices.items() if mapped != t("ignore")}
                 df_mapped = data_df.rename(columns=rename_dict).copy()
 
                 for c in DB_COLUMNS:
@@ -653,7 +985,7 @@ with nav_tabs[0]:
                 st.session_state["mapping_csv"] = csv_buf.getvalue()
                 st.session_state["mapping_done"] = True
 
-                st.success("映射已保存。现在请填写全局必填信息并导入。")
+                st.success(t("mapping_saved"))
 
     mapping_csv = st.session_state.get("mapping_csv", None)
     if mapping_csv:
@@ -664,22 +996,22 @@ with nav_tabs[0]:
                     df_for_db[c] = pd.NA
             df_for_db = df_for_db[DB_COLUMNS]
         except Exception as e:
-            st.error(f"恢复映射数据失败：{e}")
+            st.error(t("mapping_restore_fail").format(e))
             df_for_db = None
 
-        st.markdown("**映射后预览（前 10 行）：**")
+        st.markdown(f"**{t('mapped_preview')}**")
         if df_for_db is not None:
             safe_st_dataframe(df_for_db.head(10), height=320)
         else:
-            st.info("映射数据无法预览，请重新映射。")
+            st.info(t("mapping_unavailable"))
 
         if "show_global_form" not in st.session_state:
             st.session_state["show_global_form"] = False
 
         col_show, col_hint = st.columns([1, 6])
-        if col_show.button("➡️ 填写/查看全局信息并应用导入", key="open_global_form_btn"):
+        if col_show.button(t("open_global_form"), key="open_global_form_btn"):
             st.session_state["show_global_form"] = True
-        col_hint.caption("若需要对空值统一填充（币种/项目/供应商/询价人），请展开并填写全局信息。")
+        col_hint.caption(t("global_hint"))
 
         if st.session_state["show_global_form"]:
             if "bulk_values" not in st.session_state:
@@ -693,36 +1025,36 @@ with nav_tabs[0]:
 
             need_global_currency = column_has_empty_currency(df_for_db)
 
-            st.markdown("#### 全局信息（仅填充空值）")
+            st.markdown(t("global_info"))
             with st.form("global_form_v2"):
                 g1, g2, g3, g4, g5 = st.columns(5)
-                g_project = g1.text_input("项目名称", value=st.session_state["bulk_values"].get("project", ""))
-                g_supplier = g2.text_input("供应商名称", value=st.session_state["bulk_values"].get("supplier", ""))
-                g_enquirer = g3.text_input("询价人", value=st.session_state["bulk_values"].get("enquirer", ""))
+                g_project = g1.text_input(t("project_name"), value=st.session_state["bulk_values"].get("project", ""))
+                g_supplier = g2.text_input(t("supplier_name"), value=st.session_state["bulk_values"].get("supplier", ""))
+                g_enquirer = g3.text_input(t("enquirer"), value=st.session_state["bulk_values"].get("enquirer", ""))
 
                 default_date = st.session_state["bulk_values"].get("date", "")
                 try:
-                    g_date = g4.date_input("询价日期", value=pd.to_datetime(default_date).date() if default_date else date.today())
+                    g_date = g4.date_input(t("inq_date"), value=pd.to_datetime(default_date).date() if default_date else date.today())
                 except Exception:
-                    g_date = g4.date_input("询价日期", value=date.today())
+                    g_date = g4.date_input(t("inq_date"), value=date.today())
 
                 g_currency = None
                 if need_global_currency:
-                    currency_options = ["", "IDR", "USD", "RMB", "SGD", "MYR", "THB"]
+                    currency_options = [""] + CURRENCY_OPTIONS
                     curr_default = st.session_state["bulk_values"].get("currency", "")
                     default_idx = currency_options.index(curr_default) if curr_default in currency_options else 0
-                    g_currency = g5.selectbox("币种（用于填充空值）", currency_options, index=default_idx)
+                    g_currency = g5.selectbox(t("currency_fill"), currency_options, index=default_idx)
                 else:
                     g5.write("")
 
-                apply_global = st.form_submit_button("应用全局并继续校验")
+                apply_global = st.form_submit_button(t("apply_global_check"))
 
             if apply_global:
                 if not (g_project and g_supplier and g_enquirer and g_date):
-                    st.error("必须填写：项目名称、供应商名称、询价人和询价日期")
+                    st.error(t("global_required"))
                     st.session_state["bulk_applied"] = False
                 elif need_global_currency and (g_currency is None or str(g_currency).strip() == ""):
-                    st.error("由于源数据存在空的币种，请选择币种以继续。")
+                    st.error(t("global_currency_required"))
                     st.session_state["bulk_applied"] = False
                 else:
                     st.session_state["bulk_values"] = {
@@ -733,7 +1065,7 @@ with nav_tabs[0]:
                         "currency": str(g_currency) if g_currency is not None else st.session_state["bulk_values"].get("currency", "")
                     }
                     st.session_state["bulk_applied"] = True
-                    st.success("已应用全局信息，正在进行总体必填校验...")
+                    st.success(t("global_applied"))
 
             if st.session_state.get("bulk_applied", False):
                 try:
@@ -743,11 +1075,11 @@ with nav_tabs[0]:
                             df_for_db2[c] = pd.NA
                     df_for_db2 = df_for_db2[DB_COLUMNS]
                 except Exception as e:
-                    st.error(f"恢复映射数据失败：{e}")
+                    st.error(t("mapping_restore_fail").format(e))
                     df_for_db2 = None
 
                 if df_for_db2 is None:
-                    st.error("映射数据丢失，无法继续导入。")
+                    st.error(t("mapping_lost"))
                 else:
                     df_final = df_for_db2.copy()
                     g = st.session_state["bulk_values"]
@@ -788,46 +1120,46 @@ with nav_tabs[0]:
                             with engine.begin() as conn:
                                 df_to_store.to_sql("quotations", conn, if_exists="append", index=False, method="multi")
                             imported_count = len(df_to_store)
-                            st.success(f"✅ 已导入 {imported_count} 条有效记录。")
+                            st.success(t("imported_valid").format(imported_count))
                         except Exception as e:
-                            st.error(f"导入有效记录时发生错误：{e}")
+                            st.error(t("import_valid_fail").format(e))
                     else:
-                        st.info("没有找到满足总体必填条件的记录可导入。")
+                        st.info(t("no_valid_records"))
 
                     if not df_invalid.empty:
-                        st.warning(f"以下 {len(df_invalid)} 条记录缺少总体必填字段，未被导入，请修正后重新导入：")
+                        st.warning(t("invalid_rows_warn").format(len(df_invalid)))
                         safe_st_dataframe(df_invalid.head(50), height=360)
                         buf_bad = io.BytesIO()
                         with pd.ExcelWriter(buf_bad, engine="openpyxl") as w:
                             df_invalid.to_excel(w, index=False)
                         buf_bad.seek(0)
-                        st.download_button("📥 下载未通过记录（用于修正）", buf_bad, "invalid_rows.xlsx")
+                        st.download_button(t("download_invalid"), buf_bad, "invalid_rows.xlsx")
 
                     st.session_state["bulk_applied"] = False
 
     ui_hr()
-    st.header("✏️ 手工录入设备")
+    st.header(t("manual_device"))
     with st.form("manual_add_form_original", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
-        pj = col1.text_input("项目名称")
-        sup = col2.text_input("供应商名称")
-        inq = col3.text_input("询价人")
-        name = st.text_input("设备材料名称")
-        brand = st.text_input("品牌（可选）")
-        qty = st.number_input("数量确认", min_value=0.0)
-        price = st.number_input("设备单价", min_value=0.0)
-        labor_price = st.number_input("人工包干单价", min_value=0.0)
-        cur = st.selectbox("币种", ["IDR", "USD", "RMB", "SGD", "MYR", "THB"])
-        desc = st.text_area("描述")
-        date_inq = st.date_input("询价日期", value=date.today())
-        submit_manual = st.form_submit_button("添加记录（手动）")
+        pj = col1.text_input(t("project_name"))
+        sup = col2.text_input(t("supplier_name"))
+        inq = col3.text_input(t("enquirer"))
+        name = st.text_input(t("material_name"))
+        brand = st.text_input(t("brand_optional"))
+        qty = st.number_input(t("qty_confirm"), min_value=0.0)
+        price = st.number_input(t("device_unit_price"), min_value=0.0)
+        labor_price = st.number_input(t("labor_unit_price"), min_value=0.0)
+        cur = st.selectbox(t("currency"), CURRENCY_OPTIONS)
+        desc = st.text_area(t("description"))
+        date_inq = st.date_input(t("inq_date"), value=date.today())
+        submit_manual = st.form_submit_button(t("manual_add_btn"))
 
     if submit_manual:
         if not (pj and sup and inq and name):
-            st.error("必填项不能为空：项目名称、供应商名称、询价人、设备材料名称")
+            st.error(t("manual_required"))
         else:
             if not (price > 0 or labor_price > 0):
-                st.error("请至少填写 设备单价 或 人工包干单价（两者至少填一项，且大于0）。")
+                st.error(t("manual_price_required"))
             else:
                 try:
                     with engine.begin() as conn:
@@ -844,26 +1176,26 @@ with nav_tabs[0]:
                             "c": cur, "d": desc,
                             "u": user["username"], "reg": user["region"], "dt": str(date_inq)
                         })
-                    st.success("✅ 手工记录已添加")
+                    st.success(t("manual_add_success"))
                 except Exception as e:
-                    st.error(f"添加记录失败：{e}")
+                    st.error(t("manual_add_fail").format(e))
 
     ui_hr()
-    st.header("💰 手工录入杂费")
+    st.header(t("manual_misc"))
     with st.form("manual_misc_form", clear_on_submit=True):
         mcol1, mcol2, mcol3 = st.columns(3)
-        misc_project = mcol1.text_input("项目名称")
-        misc_category = mcol2.text_input("杂费类目（例如运输/安装/税费）")
-        misc_amount = mcol3.number_input("金额", min_value=0.0, format="%f")
+        misc_project = mcol1.text_input(t("project_name"))
+        misc_category = mcol2.text_input(t("misc_category"))
+        misc_amount = mcol3.number_input(t("amount"), min_value=0.0, format="%f")
         mc1, mc2 = st.columns(2)
-        misc_currency = mc1.selectbox("币种", ["IDR", "USD", "RMB", "SGD", "MYR", "THB"])
-        misc_note = mc2.text_input("备注（可选）")
-        misc_date = st.date_input("发生日期", value=date.today())
-        submit_misc = st.form_submit_button("添加杂费记录")
+        misc_currency = mc1.selectbox(t("currency"), CURRENCY_OPTIONS)
+        misc_note = mc2.text_input(t("remark_optional"))
+        misc_date = st.date_input(t("occ_date"), value=date.today())
+        submit_misc = st.form_submit_button(t("add_misc_btn"))
 
     if submit_misc:
         if not (misc_project and misc_category) or misc_amount is None:
-            st.error("请填写项目名称、杂费类目和金额")
+            st.error(t("misc_required"))
         else:
             try:
                 with engine.begin() as conn:
@@ -880,37 +1212,37 @@ with nav_tabs[0]:
                         "region": user["region"],
                         "occ_date": str(misc_date)
                     })
-                st.success("✅ 杂费记录已添加")
+                st.success(t("misc_add_success"))
             except Exception as e:
-                st.error(f"添加杂费记录失败：{e}")
+                st.error(t("misc_add_fail").format(e))
 
 
 # ==================== PAGE: SEARCH QUOTATIONS ====================
 with nav_tabs[1]:
-    ui_card("设备查询", "按关键词 / 项目 / 供应商 / 品牌 / 地区筛选，并支持导出 Excel")
+    ui_card(t("device_query_title"), t("device_query_sub"))
     ui_hr()
 
-    st.header("📋 设备查询")
+    st.header("📋 " + t("device_query_title"))
 
-    kw = st.text_input("关键词（多个空格分词）", key="search_kw")
+    kw = st.text_input(t("keyword_multi"), key="search_kw")
     search_fields = st.multiselect(
-        "搜索字段（留空为默认）",
+        t("search_fields"),
         ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称", "地区"],
         key="search_fields"
     )
-    pj_filter = st.text_input("按项目名称过滤", key="search_pj")
-    sup_filter = st.text_input("按供应商名称过滤", key="search_sup")
-    brand_filter = st.text_input("按品牌过滤", key="search_brand")
-    cur_filter = st.selectbox("币种", ["全部", "IDR", "USD", "RMB", "SGD", "MYR", "THB"], index=0, key="search_cur")
+    pj_filter = st.text_input(t("filter_project"), key="search_pj")
+    sup_filter = st.text_input(t("filter_supplier"), key="search_sup")
+    brand_filter = st.text_input(t("filter_brand"), key="search_brand")
+    cur_filter = st.selectbox(t("currency"), [t("all")] + CURRENCY_OPTIONS, index=0, key="search_cur")
 
-    regions_options = ["全部", "Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
+    regions_options = [t("all")] + REGION_OPTIONS_ADMIN
     if user["role"] == "admin":
-        region_filter = st.selectbox("按地区过滤（管理员）", regions_options, index=0, key="search_region")
+        region_filter = st.selectbox(t("filter_region_admin"), regions_options, index=0, key="search_region")
     else:
-        st.info(f"仅显示您所在地区的数据：{user['region']}")
+        st.info(t("only_region_data").format(user["region"]))
         region_filter = user["region"]
 
-    if st.button("🔍 搜索设备", key="search_button"):
+    if st.button(t("search_device_btn"), key="search_button"):
         conds = []
         params = {}
 
@@ -923,7 +1255,7 @@ with nav_tabs[1]:
         if brand_filter:
             conds.append("LOWER(品牌) LIKE :brand")
             params["brand"] = f"%{brand_filter.lower()}%"
-        if cur_filter != "全部":
+        if cur_filter != t("all"):
             conds.append("币种 = :cur")
             params["cur"] = cur_filter
 
@@ -931,19 +1263,19 @@ with nav_tabs[1]:
             conds.append("地区 = :r")
             params["r"] = user["region"]
         else:
-            if region_filter and region_filter != "全部":
+            if region_filter and region_filter != t("all"):
                 conds.append("地区 = :r")
                 params["r"] = region_filter
 
         if kw:
             tokens = re.findall(r"\S+", kw)
             fields = search_fields if search_fields else ["设备材料名称", "描述", "品牌", "规格或型号", "项目名称", "供应商名称"]
-            for i, t in enumerate(tokens):
+            for i, token in enumerate(tokens):
                 ors = []
                 for j, f in enumerate(fields):
                     pname = f"kw_{i}_{j}"
                     ors.append(f"LOWER({f}) LIKE :{pname}")
-                    params[pname] = f"%{t.lower()}%"
+                    params[pname] = f"%{token.lower()}%"
                 conds.append("(" + " OR ".join(ors) + ")")
 
         sql = "SELECT * FROM quotations"
@@ -954,11 +1286,11 @@ with nav_tabs[1]:
         try:
             df = pd.read_sql(text(sql), engine, params=params)
         except Exception as e:
-            st.error(f"查询失败：{e}")
+            st.error(t("query_fail").format(e))
             df = pd.DataFrame()
 
         if df.empty:
-            st.info("未找到符合条件的记录。")
+            st.info(t("no_records"))
         else:
             safe_st_dataframe(df, height=520)
 
@@ -966,9 +1298,8 @@ with nav_tabs[1]:
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 df.to_excel(writer, index=False)
             buf.seek(0)
-            st.download_button("下载结果", buf, "设备查询结果.xlsx", key="download_search")
+            st.download_button(t("download_result"), buf, "device_query_results.xlsx", key="download_search")
 
-            # Price stats (unchanged)
             try:
                 df_prices = df.copy()
                 device_price_col = "设备单价"
@@ -989,21 +1320,21 @@ with nav_tabs[1]:
                     return "-" if (v is None or (isinstance(v, float) and pd.isna(v))) else f"{v:,.2f}"
 
                 ui_hr()
-                st.markdown("### 当前查询 — 价格统计概览（基于返回记录）")
+                st.markdown(t("price_stats"))
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("设备单价 — 均价", fmt(overall["dev_mean"]))
-                c2.metric("设备单价 — 最低价", fmt(overall["dev_min"]))
-                c3.metric("人工包干单价 — 均价", fmt(overall["lab_mean"]))
-                c4.metric("人工包干单价 — 最低价", fmt(overall["lab_min"]))
+                c1.metric(t("device_avg"), fmt(overall["dev_mean"]))
+                c2.metric(t("device_min"), fmt(overall["dev_min"]))
+                c3.metric(t("labor_avg"), fmt(overall["lab_mean"]))
+                c4.metric(t("labor_min"), fmt(overall["lab_min"]))
 
                 if not pd.isna(overall["dev_min"]):
                     dev_min_rows = df_prices[df_prices[device_price_col] == overall["dev_min"]].copy()
-                    st.markdown("#### 设备单价 — 历史最低价对应记录（可能多条并列）")
+                    st.markdown(t("device_min_rows"))
                     safe_st_dataframe(dev_min_rows.reset_index(drop=True), height=260)
 
                 if not pd.isna(overall["lab_min"]):
                     lab_min_rows = df_prices[df_prices[labor_price_col] == overall["lab_min"]].copy()
-                    st.markdown("#### 人工包干单价 — 历史最低价对应记录（可能多条并列）")
+                    st.markdown(t("labor_min_rows"))
                     safe_st_dataframe(lab_min_rows.reset_index(drop=True), height=260)
 
                 if name_col in df_prices.columns:
@@ -1014,15 +1345,14 @@ with nav_tabs[1]:
                         人工包干单价_最低=(labor_price_col, lambda s: s.min(skipna=True)),
                         样本数=(device_price_col, "count")
                     ).reset_index()
-                    st.markdown("#### 按设备名称分组 — 均价 / 最低价")
+                    st.markdown(t("group_by_name"))
                     safe_st_dataframe(agg.sort_values(by="设备单价_均价", ascending=True).head(200), height=360)
             except Exception as e:
-                st.warning(f"计算价格统计时发生异常：{e}")
+                st.warning(t("stats_fail").format(e))
 
-            # Admin delete by id (unchanged)
             if user["role"] == "admin":
                 ui_hr()
-                st.markdown("### ⚠️ 管理员删除（按 id 删除）")
+                st.markdown(t("admin_delete_title"))
                 choices = []
                 for _, row in df.iterrows():
                     rid = int(row["id"])
@@ -1032,24 +1362,24 @@ with nav_tabs[1]:
                     choices.append(f"{rid} | {proj} | {name} | {brand}")
 
                 with st.form("admin_delete_form_pg", clear_on_submit=False):
-                    selected = st.multiselect("选中要删除的记录", choices, key="admin_delete_selected_pg")
-                    confirm = st.checkbox("我确认删除所选记录（不可恢复）", key="admin_delete_confirm_pg")
-                    submit_del = st.form_submit_button("删除所选记录（管理员）", key="admin_delete_submit_pg")
+                    selected = st.multiselect(t("admin_select_delete"), choices, key="admin_delete_selected_pg")
+                    confirm = st.checkbox(t("admin_confirm_delete"), key="admin_delete_confirm_pg")
+                    submit_del = st.form_submit_button(t("admin_delete_btn"), key="admin_delete_submit_pg")
 
                 if submit_del:
                     if not selected:
-                        st.warning("请先选择要删除的记录。")
+                        st.warning(t("select_delete_first"))
                     elif not confirm:
-                        st.warning("请勾选确认框以执行删除。")
+                        st.warning(t("confirm_delete_first"))
                     else:
                         try:
                             selected_ids = [int(s.split("|", 1)[0].strip()) for s in selected]
                         except Exception as e:
-                            st.error(f"解析所选 id 失败：{e}")
+                            st.error(t("parse_id_fail").format(e))
                             selected_ids = []
 
                         if not selected_ids:
-                            st.warning("无有效 id，取消删除。")
+                            st.warning(t("invalid_id_cancel"))
                         else:
                             placeholders = ",".join(str(int(i)) for i in selected_ids)
                             try:
@@ -1069,23 +1399,23 @@ with nav_tabs[1]:
                                         FROM quotations WHERE id IN ({placeholders})
                                     """), {"user": user["username"]})
                                     conn.execute(text(f"DELETE FROM quotations WHERE id IN ({placeholders})"))
-                                st.success("✅ 已删除并归档所选记录。")
+                                st.success(t("delete_archive_success"))
                                 safe_rerun()
                             except Exception as e:
-                                st.error(f"删除/归档失败：{e}")
+                                st.error(t("delete_archive_fail").format(e))
             else:
-                st.info("仅管理员可删除记录。")
+                st.info(t("only_admin_delete"))
 
 
 # ==================== PAGE: SEARCH MISC ====================
 with nav_tabs[2]:
-    ui_card("杂费查询", "按项目名称检索杂费记录，支持导出 Excel")
+    ui_card(t("misc_query_title"), t("misc_query_sub"))
     ui_hr()
 
-    st.header("💰 杂费查询")
-    pj2 = st.text_input("按项目名称过滤", key="misc_pj")
+    st.header("💰 " + t("misc_query_title"))
+    pj2 = st.text_input(t("filter_project"), key="misc_pj")
 
-    if st.button("🔍 搜索杂费", key="misc_search"):
+    if st.button(t("search_misc_btn"), key="misc_search"):
         params = {"pj": f"%{pj2.lower()}%"}
         sql = """
             SELECT id, 项目名称, 杂费类目, 金额, 币种, 录入人, 地区, 发生日期
@@ -1100,7 +1430,7 @@ with nav_tabs[2]:
         try:
             df2 = pd.read_sql(text(sql), engine, params=params)
         except Exception as e:
-            st.error(f"查询失败：{e}")
+            st.error(t("query_fail").format(e))
             df2 = pd.DataFrame()
 
         safe_st_dataframe(df2, height=520)
@@ -1109,87 +1439,87 @@ with nav_tabs[2]:
             with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
                 df2.to_excel(writer, index=False)
             buf2.seek(0)
-            st.download_button("下载杂费结果", buf2, "misc_costs.xlsx", key="download_misc")
+            st.download_button(t("download_misc"), buf2, "misc_costs.xlsx", key="download_misc")
 
 
 # ==================== PAGE: ADMIN ====================
 if user["role"] == "admin":
     with nav_tabs[3]:
-        ui_card("管理员后台", "用户管理：查看 / 修改地区 / 删除账号（保护当前用户与默认 admin）")
+        ui_card(t("admin_panel"), t("admin_panel_sub"))
         ui_hr()
 
-        st.header("👑 管理员后台 — 用户管理")
+        st.header(t("admin_user_mgmt"))
         users_df = pd.read_sql(text("SELECT id, username, role, region FROM users ORDER BY id"), engine)
         safe_st_dataframe(users_df, height=420)
 
         ui_hr()
-        st.subheader("🛠️ 修改用户地区（Region）")
+        st.subheader(t("update_region_title"))
 
-        region_options = ["Singapore", "Malaysia", "Thailand", "Indonesia", "Vietnam", "Philippines", "Others", "All"]
+        region_options = REGION_OPTIONS_ADMIN
         user_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in users_df.iterrows()]
 
         with st.form("admin_update_user_region_form"):
-            target = st.selectbox("选择要修改的用户", user_choices, key="admin_update_user_select")
-            new_region = st.selectbox("新地区", region_options, key="admin_update_user_region")
-            confirm_update = st.checkbox("我确认要修改该用户地区", key="admin_update_user_confirm")
-            submit_update = st.form_submit_button("更新地区")
+            target = st.selectbox(t("select_user_update"), user_choices, key="admin_update_user_select")
+            new_region = st.selectbox(t("new_region"), region_options, key="admin_update_user_region")
+            confirm_update = st.checkbox(t("confirm_update_region"), key="admin_update_user_confirm")
+            submit_update = st.form_submit_button(t("update_region_btn"))
 
         if submit_update:
             try:
                 target_id = int(target.split("|", 1)[0].strip())
                 target_row = users_df[users_df["id"] == target_id]
                 if target_row.empty:
-                    st.error("未找到该用户，请刷新页面。")
+                    st.error(t("user_not_found"))
                 else:
                     target_username = str(target_row.iloc[0]["username"])
                     target_role = str(target_row.iloc[0]["role"])
 
                     if target_role == "admin" and target_username == "admin":
-                        st.warning("系统默认 admin 不建议修改地区。")
+                        st.warning(t("default_admin_warn"))
                     elif not confirm_update:
-                        st.warning("请勾选确认框后再更新。")
+                        st.warning(t("confirm_update_first"))
                     else:
                         with engine.begin() as conn:
                             conn.execute(text("UPDATE users SET region=:r WHERE id=:id"), {"r": new_region, "id": target_id})
-                        st.success(f"✅ 已更新用户 {target_username} 的地区为：{new_region}")
+                        st.success(t("update_region_success").format(target_username, new_region))
                         safe_rerun()
             except Exception as e:
-                st.error(f"更新失败：{e}")
+                st.error(t("update_fail").format(e))
 
         ui_hr()
-        st.subheader("🗑️ 删除用户账号")
-        st.caption("说明：删除账号不会自动删除该用户已录入的报价/杂费数据（数据仍保留在 quotations / misc_costs 表中）。")
+        st.subheader(t("delete_user_title"))
+        st.caption(t("delete_user_caption"))
 
         protected_usernames = {user["username"], "admin"}
         deletable_rows = users_df[~users_df["username"].isin(protected_usernames)].copy()
 
         if deletable_rows.empty:
-            st.info("当前没有可删除的用户（已保护当前登录用户与默认 admin）。")
+            st.info(t("no_deletable_user"))
         else:
             del_choices = [f"{row['id']} | {row['username']} | {row['role']} | {row['region']}" for _, row in deletable_rows.iterrows()]
 
             with st.form("admin_delete_users_form"):
-                selected = st.multiselect("选择要删除的用户（可多选）", del_choices, key="admin_delete_users_select")
-                confirm_del = st.checkbox("我确认删除所选用户（不可恢复）", key="admin_delete_users_confirm")
-                submit_del = st.form_submit_button("删除用户")
+                selected = st.multiselect(t("select_delete_user"), del_choices, key="admin_delete_users_select")
+                confirm_del = st.checkbox(t("confirm_delete_user"), key="admin_delete_users_confirm")
+                submit_del = st.form_submit_button(t("delete_user_btn"))
 
             if submit_del:
                 if not selected:
-                    st.warning("请先选择要删除的用户。")
+                    st.warning(t("select_delete_first"))
                 elif not confirm_del:
-                    st.warning("请勾选确认框后再删除。")
+                    st.warning(t("confirm_delete_first"))
                 else:
                     try:
                         del_ids = [int(s.split("|", 1)[0].strip()) for s in selected]
                         check_df = users_df[users_df["id"].isin(del_ids)]
                         bad = check_df[check_df["username"].isin(protected_usernames)]
                         if not bad.empty:
-                            st.error("所选用户包含受保护账号（当前登录用户或默认 admin），已拒绝删除。")
+                            st.error(t("protected_user_error"))
                         else:
                             placeholders = ",".join(str(i) for i in del_ids)
                             with engine.begin() as conn:
                                 conn.execute(text(f"DELETE FROM users WHERE id IN ({placeholders})"))
-                            st.success(f"✅ 已删除 {len(del_ids)} 个用户账号")
+                            st.success(t("delete_user_success").format(len(del_ids)))
                             safe_rerun()
                     except Exception as e:
-                        st.error(f"删除失败：{e}")
+                        st.error(t("delete_archive_fail").format(e))

@@ -1150,7 +1150,7 @@ with nav_tabs[0]:
                     if need_global_currency and g.get("currency"):
                         fill_empty("币种", str(g["currency"]))
 
-                    required_nonprice = ["项目名称", "供应商名称", "询价人", "设备材料名称", "币种", "询价日期"]
+                    required_nonprice = ["项目名称", "供应商名称", "询价人", "币种", "询价日期"]
                     check_nonprice = df_final[required_nonprice].map(normalize_cell)
                     missing_nonprice = check_nonprice.isna().any(axis=1)
 
@@ -1158,9 +1158,15 @@ with nav_tabs[0]:
                         v1 = normalize_cell(row.get("设备单价", None))
                         v2 = normalize_cell(row.get("人工包干单价", None))
                         return (v1 is not None) or (v2 is not None)
+                    def has_name_or_model(row):
+                        name = normalize_cell(row.get("设备材料名称", None))
+                        model = normalize_cell(row.get("规格或型号", None))
+                        return (name is not None) or (model is not None)
 
+                    name_mask = df_final.apply(has_name_or_model, axis=1)
+                    
                     price_mask = df_final.apply(price_has_value, axis=1)
-                    rows_invalid_mask = missing_nonprice | (~price_mask)
+                    rows_invalid_mask = missing_nonprice | (~price_mask)| (~name_mask)
 
                     df_valid = df_final[~rows_invalid_mask].copy()
                     df_invalid = df_final[rows_invalid_mask].copy()

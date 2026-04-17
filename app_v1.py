@@ -1174,6 +1174,8 @@ with nav_tabs[0]:
                     if not df_valid.empty:
                         try:
                             df_to_store = df_valid.dropna(how="all").drop_duplicates().reset_index(drop=True)
+                            df_to_store = df_to_store.astype(object)
+                            df_to_store = df_to_store.where(pd.notnull(df_to_store), None)
                             with engine.begin() as conn:
                                 df_to_store.to_sql("quotations", conn, if_exists="append", index=False, method="multi")
                             st.success(t("imported_valid").format(len(df_to_store)))

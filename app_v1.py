@@ -1151,7 +1151,7 @@ with nav_tabs[0]:
                         fill_empty("币种", str(g["currency"]))
 
                     required_nonprice = ["项目名称", "供应商名称", "询价人", "设备材料名称", "币种", "询价日期"]
-                    check_nonprice = df_final[required_nonprice].applymap(normalize_cell)
+                    check_nonprice = df_final[required_nonprice].map(normalize_cell)
                     missing_nonprice = check_nonprice.isna().any(axis=1)
 
                     def price_has_value(row) -> bool:

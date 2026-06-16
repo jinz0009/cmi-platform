@@ -173,8 +173,80 @@ p, label, .stCaption { color: var(--muted) !important; }
 [data-testid="collapsedControl"]{
   color: rgba(255,255,255,0.7) !important;
 }
+
+/* ==================== Hide Streamlit / GitHub / Deploy Icons ==================== */
+
+/* Hide top-right toolbar container */
+[data-testid="stToolbar"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Hide Streamlit main menu */
+#MainMenu {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Hide footer */
+footer {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Hide header action buttons, including GitHub / deploy / overflow icons */
+header [data-testid="stToolbar"],
+header [data-testid="stDecoration"],
+header [data-testid="stStatusWidget"],
+header button,
+header a {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Hide GitHub-related links/icons if rendered as anchors */
+a[href*="github"],
+a[href*="GitHub"],
+a[aria-label*="GitHub"],
+a[title*="GitHub"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Hide Streamlit deploy/share/menu related buttons */
+button[title*="Deploy"],
+button[aria-label*="Deploy"],
+button[title*="Share"],
+button[aria-label*="Share"],
+button[title*="GitHub"],
+button[aria-label*="GitHub"],
+button[kind="header"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Reduce header height after hiding toolbar */
+[data-testid="stHeader"] {
+  height: 0rem !important;
+  min-height: 0rem !important;
+  background: transparent !important;
+}
+
+/* Avoid blank space at the top */
+.block-container {
+  padding-top: 1rem !important;
+}
 """
 st.markdown(f"<style>{THEME_CSS}</style>", unsafe_allow_html=True)
+
 
 
 # ==================== I18N ====================

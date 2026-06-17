@@ -3,3 +3,5 @@ pandas
 sqlalchemy>=2.0
 openpyxl
 psycopg2-binary
+openpyxl
+requests
